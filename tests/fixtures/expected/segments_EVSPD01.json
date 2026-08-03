@@ -146,15 +146,15 @@
     },
     {
       "_anchor_end_rel_kwh": 127.514,
-      "_anchor_end_time": "2025-06-27T06:20:55",
+      "_anchor_end_time": "2025-06-27T06:20:55+00:00",
       "_anchor_start_rel_kwh": 70.08,
-      "_anchor_start_time": "2025-06-27T04:37:25",
+      "_anchor_start_time": "2025-06-27T04:37:25+00:00",
       "delta_energy_kwh": -57.434,
       "delta_moving_kwh": null,
       "delta_soc_pct": -16.0,
       "effective_capacity_kwh": 359.0,
       "end_soc": 84.0,
-      "end_time": "2025-06-27T06:03:10",
+      "end_time": "2025-06-27T06:03:10+00:00",
       "energy_source": "total_energy",
       "lat_end": 0.582268,
       "lat_start": 0.360567,
@@ -163,7 +163,7 @@
       "odo_end_km": 35620.555,
       "odo_start_km": 35574.465,
       "start_soc": 100.0,
-      "start_time": "2025-06-27T05:00:40"
+      "start_time": "2025-06-27T05:00:40+00:00"
     },
     {
       "_anchor_end_rel_kwh": 186.536,

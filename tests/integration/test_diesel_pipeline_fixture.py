@@ -203,17 +203,21 @@ def test_trip_metrics_matches_the_frozen_golden(
     assert serialise(seg_metrics) == golden["trips"]
 
 
-def test_csv_sourced_frame_has_no_origin_destination_coordinates(diesel_segments):
-    """A DOCUMENTED limitation, asserted so it cannot change silently.
+def test_csv_sourced_frame_carries_origin_destination_coordinates(diesel_segments):
+    """The CSV path must yield the same coordinates as the live path.
 
-    ``_build_logger_df`` renames Channel-2 latitude/longitude to ``_lat`` /
-    ``_lon``; ``_logger_df_from_csv`` does not, so a CSV-sourced frame yields no
-    coordinates. The CSV path exists to re-drive segmentation for figures, while
-    the xlsx rows always come from the live ``_build_logger_df`` path.
+    Both ``_build_logger_df`` and ``_logger_df_from_csv`` rename the Channel-2
+    latitude/longitude to ``_lat`` / ``_lon`` via the shared ``_GPS_LAT`` /
+    ``_GPS_LON`` constants. This used to hold for the live path only, so a report
+    regenerated from cached CSVs silently lost its origin/destination coordinates;
+    the assertion is inverted here to keep that regression from returning.
     """
     _trips, seg_metrics, _cfg = diesel_segments
     seg = seg_metrics[0]
-    assert seg["lat_s"] is None and seg["lon_s"] is None
+    assert seg["lat_s"] is not None and seg["lon_s"] is not None
+    assert seg["lat_e"] is not None and seg["lon_e"] is not None
+    # the fixture's GPS was rigid-transformed to a synthetic origin near (0.5, 0.5)
+    assert -1.0 < seg["lat_s"] < 2.0 and -1.0 < seg["lon_s"] < 2.0
 
 
 def test_renaming_the_gps_columns_recovers_the_coordinates(diesel_fixture_frame):

@@ -180,7 +180,16 @@ def compute_pedal_histogram(
     Returns:
         The histogram string or None
     """
-    if pedal_series is None or len(pedal_series) < MIN_SAMPLES:
+    if pedal_series is None:
+        return None
+    try:
+        n_samples = len(pedal_series)
+    except TypeError:
+        # Honour the documented contract: unusable input yields None. A
+        # size-less argument (a bare number, an object) would otherwise raise
+        # ``TypeError`` out of this gate.
+        return None
+    if n_samples < MIN_SAMPLES:
         return None
 
     # Normalise to DataFrame format

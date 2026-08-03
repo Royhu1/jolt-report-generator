@@ -157,8 +157,15 @@ def _write_report_sheet(workbook, ws, rows: list[tuple], headers: tuple) -> None
         for ci_offset, val in enumerate(row):
             ci = ci_offset + 1  # +1 for Leg Number column
             col_name = headers[ci]
+            # Link columns: only a non-empty STRING is a hyperlink. NaN is
+            # truthy, so a bare ``and val`` would hand a NaN to ``write_url``
+            # and raise ``TypeError: argument of type 'float' is not iterable``.
+            # Requiring ``str`` sends NaN — and any other non-string — on to the
+            # ``_is_nan`` / ``None`` / plain-value branches below, so a missing
+            # link becomes ``=NA()`` exactly like every other empty cell.
             if (
                 col_name in ("Telematics Link", "Charger Link", "SRF Logger Link")
+                and isinstance(val, str)
                 and val
             ):
                 ws.write_url(ri, ci, val, string="Link", cell_format=fmt["url"])

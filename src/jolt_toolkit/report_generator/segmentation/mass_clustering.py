@@ -707,9 +707,22 @@ def _merge_two_discharge_segs(seg_a: dict, seg_b: dict) -> dict:
     src_b = seg_b.get("energy_source", "soc_estimate")
     src = src_a if _prio.get(src_a, 9) <= _prio.get(src_b, 9) else src_b
 
+    # Timestamp normalisation: the two endpoints come from DIFFERENT segments,
+    # which need not agree on tz-awareness (a segment straight from the detector
+    # can be tz-naive while one rebuilt by ``split_discharge_by_mass`` is
+    # tz-aware). Without coercion the merged dict could pair an aware
+    # ``start_time`` with a naive ``end_time``, and ``end - start`` on the raw
+    # segment raises. ``_to_utc`` leaves the instant unchanged (a naive
+    # timestamp is already UTC everywhere in this pipeline), so only the dtype
+    # is affected. The anchors mix by the same mechanism, but stay ``None``
+    # until a detector or ``_recompute_anchors`` fills them — coerce only when
+    # present.
+    a_start = seg_a.get("_anchor_start_time")
+    a_end = seg_b.get("_anchor_end_time")
+
     return {
-        "start_time": seg_a["start_time"],
-        "end_time": seg_b["end_time"],
+        "start_time": _to_utc(seg_a["start_time"]),
+        "end_time": _to_utc(seg_b["end_time"]),
         "start_soc": soc_s,
         "end_soc": soc_e,
         "delta_soc_pct": round(dsoc, 2),
@@ -723,8 +736,8 @@ def _merge_two_discharge_segs(seg_a: dict, seg_b: dict) -> dict:
         "lon_start": seg_a.get("lon_start"),
         "lat_end": seg_b.get("lat_end"),
         "lon_end": seg_b.get("lon_end"),
-        "_anchor_start_time": seg_a.get("_anchor_start_time"),
-        "_anchor_end_time": seg_b.get("_anchor_end_time"),
+        "_anchor_start_time": _to_utc(a_start) if a_start is not None else None,
+        "_anchor_end_time": _to_utc(a_end) if a_end is not None else None,
         "_anchor_start_rel_kwh": seg_a.get("_anchor_start_rel_kwh", float("nan")),
         "_anchor_end_rel_kwh": seg_b.get("_anchor_end_rel_kwh", float("nan")),
     }

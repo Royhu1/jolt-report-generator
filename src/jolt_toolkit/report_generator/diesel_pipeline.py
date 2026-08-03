@@ -76,6 +76,14 @@ _W_WIND_S = "7 wind speed"
 _W_WIND_D = "7 wind direction"
 _CARDINALS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
+# ── Logger Channel 2 GPS position channels ─────────────────────────────────
+# Fixed channel names (not configurable): both the live SRF path
+# (:func:`_build_logger_df`) and the cached-CSV path
+# (:func:`_logger_df_from_csv`) map them onto the internal "_lat"/"_lon"
+# columns that :func:`_trip_metrics` reads, so the two sources stay in step.
+_GPS_LAT = "2 latitude"
+_GPS_LON = "2 longitude"
+
 
 def _build_logger_df(leg, cfg: dict) -> pd.DataFrame | None:
     """
@@ -157,10 +165,10 @@ def _build_logger_df(leg, cfg: dict) -> pd.DataFrame | None:
             df_gps = leg.get_data_frame("2", resolution="1s")
             if df_gps is not None and not df_gps.empty:
                 gps_cols = {}
-                if "2 longitude" in df_gps.columns:
-                    gps_cols["_lon"] = df_gps["2 longitude"]
-                if "2 latitude" in df_gps.columns:
-                    gps_cols["_lat"] = df_gps["2 latitude"]
+                if _GPS_LON in df_gps.columns:
+                    gps_cols["_lon"] = df_gps[_GPS_LON]
+                if _GPS_LAT in df_gps.columns:
+                    gps_cols["_lat"] = df_gps[_GPS_LAT]
                 if alt_col in df_gps.columns:
                     gps_cols[alt_col] = df_gps[alt_col]
                 if speed_fb in df_gps.columns:
@@ -242,6 +250,17 @@ def _logger_df_from_csv(csv_path: Path, cfg: dict) -> pd.DataFrame | None:
     df.index = idx[~idx.isna()]
     if df.empty:
         return None
+
+    # Rename Channel 2 GPS to the internal "_lat"/"_lon" columns, exactly as the
+    # live path does when it pulls Channel 2. The CSV carries the raw channel
+    # names, so without this the coordinates never reach ``_trip_metrics`` and a
+    # report regenerated from cache loses the Origin/Destination positions the
+    # live run produced. Renaming (rather than copying) reproduces the live
+    # frame's shape; a CSV without GPS is unaffected.
+    for src_col, dst_col in ((_GPS_LAT, "_lat"), (_GPS_LON, "_lon")):
+        if src_col in df.columns and dst_col not in df.columns:
+            df = df.rename(columns={src_col: dst_col})
+
     return _finalise_logger_df(df, cfg, source=csv_path.name)
 
 
