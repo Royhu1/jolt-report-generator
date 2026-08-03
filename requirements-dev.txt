@@ -1,3 +1,7 @@
 # Development / test dependencies.
 -r requirements.txt
 pytest>=7.4.0
+# Optional coverage reporting: pytest --cov=jolt_toolkit --cov-report=term-missing
+# Not required to run the suite. See tests/README.md for the current figure and
+# the deliberate coverage gaps.
+pytest-cov>=4.1.0

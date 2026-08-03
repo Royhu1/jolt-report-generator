@@ -1,0 +1,28 @@
+{
+  "alias": "DSL01",
+  "source": "raw/DSL01/logger_2025-10-07_0000.csv",
+  "trips": [
+    {
+      "avg_speed": 14.5,
+      "distance_km": 1.003,
+      "elev_diff": -0.62,
+      "end_time": "2025-10-07T05:34:50+00:00",
+      "energy_kwh": 5.0,
+      "fuel_consumption_l_per_100km": 49.85,
+      "fuel_l": 0.5,
+      "humidity_avg": 85.983732,
+      "lat_e": null,
+      "lat_s": null,
+      "lon_e": null,
+      "lon_s": null,
+      "mass_source": "cvw_trip",
+      "pressure_avg": 1024.0,
+      "start_time": "2025-10-07T05:30:41+00:00",
+      "temp_avg": 11.84,
+      "veh_mass": 16000.0,
+      "veh_mass_cv": 0.0,
+      "wind_dir_text": "SW",
+      "wind_speed_avg": 2.06
+    }
+  ]
+}

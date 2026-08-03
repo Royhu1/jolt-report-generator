@@ -20,7 +20,10 @@ src/jolt_toolkit/          # the code workspace (this is the whole deliverable)
 ├── DEPLOYMENT.md          # ← START HERE for deployment: env vars, state, caches, contracts
 ├── versions.md            # version history
 └── requirements.txt       # runtime dependencies (travels with the folder)
-tests/                     # offline contract tests (no network, no API key needed)
+tests/                     # offline test suite (no network, no API key needed)
+├── unit/                  # pure functions, hand-computed expectations
+├── integration/           # multi-module runs over anonymised real telematics
+└── fixtures/              # the anonymised CSVs, frozen configs and golden snapshots
 ```
 
 ## Not a pip package
@@ -61,8 +64,19 @@ just works.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # offline: column contracts, config integrity, imports, CLI
+pytest                     # ~40 s, ~950 tests, fully offline
 ```
+
+No `SRF_API_KEY`, no network and no writable state outside the temp directory:
+outbound sockets are blocked for the whole session, and everything that would
+talk to SRF, OpenWeather or a geocoder is either injected or mocked.
+
+The suite covers the data-processing logic, not just imports: the segmentation
+branches, mass aggregation, the effective-capacity model, the diesel pipeline,
+Excel writing and the capacity ledger all run against committed **anonymised real
+telematics** and are compared field by field against frozen golden snapshots.
+See `tests/README.md` for the layout and `tests/fixtures/README.md` for what the
+fixtures contain and how they were de-identified.
 
 ## Vehicles that are not configured
 

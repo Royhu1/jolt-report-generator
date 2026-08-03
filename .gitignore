@@ -8,6 +8,12 @@ __pycache__/
 excel_report_database/
 cache/
 
+# test run artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
 # local Chinese reading copies (internal convention)
 *.zh.md
 
