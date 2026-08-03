@@ -2,10 +2,9 @@
 segment_algorithms.py
 =====================
 Unified detection algorithm for charge segments (Volvo / Renault) and discharge
-segments (Scania). Per-leg validation figures are painted externally by the
-report-visuals skill, which passes a painter via
-``run_segment_detection(figure_hook=...)``; this package no longer imports
-matplotlib.
+segments (Scania). Per-leg validation figures are painted externally by a
+renderer that passes its painter via ``run_segment_detection(figure_hook=...)``;
+this package does not import matplotlib.
 
 Unified output schema (v2)
 --------------------------
@@ -58,7 +57,7 @@ _ANCHOR_PRIVATE_KEYS
 # ``report_builder`` / ``diesel_pipeline`` / the patchers / the recompute tool)
 # keep working unchanged.
 #
-# Now owned by the report-visuals skill
+# Not provided by this facade (owned by the external renderer)
 # ---------------------------------------------------------
 # The validation-figure painter left the package with matplotlib. These names are
 # NO LONGER importable from this facade: ``plot_leg_validation``,
@@ -67,7 +66,7 @@ _ANCHOR_PRIVATE_KEYS
 # ``_HAS_MPL``, ``_TEXT_BBOX`` and the figure style constants (``_CHARGE_COLOR`` /
 # ``_DISCHARGE_COLOR`` / ``_FIGURE_SIZE`` / ``_DPI`` / ``_LABEL_FONT`` /
 # ``_TICK_FONT`` / ``_LEGEND_FONT`` / ``_DSOC_FONT`` / ``_DATE_FMT``). The
-# report-visuals skill owns them and passes its own painter to
+# external renderer owns them and passes its own painter to
 # ``run_segment_detection(figure_hook=...)``. Consequently, importing this module
 # NO LONGER imports matplotlib or sets the ``Agg`` backend.
 #

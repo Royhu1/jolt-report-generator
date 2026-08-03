@@ -13,9 +13,8 @@ weighted-average schema (:func:`_recompute_weighted_capacity`), the time-local
 The two big functions were ``@staticmethod``s on ``JOLTReportGenerator``; they
 are re-exposed there (``JOLTReportGenerator._correct_effective_capacity`` /
 ``_persist_effective_capacity``) by ``_generator`` so existing call sites keep
-working (the cached-recompute tool
-``.claude/skills/generate-excel-report/tools/recompute_from_cache.py`` and
-:mod:`jolt_toolkit.report_generator.capacity_backfill`).
+working (:mod:`jolt_toolkit.report_generator.capacity_backfill` and the
+out-of-workspace cached-recompute tool).
 """
 
 import logging
@@ -393,7 +392,7 @@ def _correct_effective_capacity(
     with user-verified trustworthy high-rate counters (AV24LXJ/K/L) are
     deliberately NOT opted in. (The rejected "±1σ scaled by ΔSOC" MODE B
     alternative and the deferred systematic-counter-bias / anchor-spillover
-    investigations live in the git history / changelogs / pending_issues.)
+    investigations are recorded in the git history.)
     """
     # Per-vehicle SOC-energy fallback control (None = MODE A only).
     fb_enabled = bool(soc_fallback and soc_fallback.get("enabled"))

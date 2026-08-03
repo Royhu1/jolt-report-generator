@@ -17,10 +17,10 @@ Main differences from the EV pipeline:
 External entry point:
   * process_diesel_leg(leg, cfg, cumulative_km, srf_data, ...) -> (row_tuples, cumulative_km)
 
-This module no longer paints the diesel validation figures. The 4-panel
-diesel painter (Speed / cumulative fuel / cumulative mileage / GCVW) and its
-in-place overlay-regenerate entry moved to the report-visuals skill together with
-matplotlib; the skill re-drives the shared, package-side segmentation
+This module paints no diesel validation figures. The 4-panel diesel painter
+(Speed / cumulative fuel / cumulative mileage / GCVW) and its in-place
+overlay-regenerate entry live outside this workspace, together with matplotlib;
+that external renderer re-drives the shared, package-side segmentation
 (:func:`_segments_from_df` / :func:`_logger_df_from_csv`) to produce identical
 figures. The data-processing half (channel pulls, trip metrics, row building)
 stays here.
@@ -531,8 +531,8 @@ def _segments_from_df(
 
     Shared, package-side segmentation logic with two consumers (DRY):
       * ``process_diesel_leg`` — generates xlsx rows (the caller converts seg_metrics to rows).
-      * the report-visuals skill's diesel figure regenerate — re-drives
-        this to redraw the 4-panel validation figure without re-running the xlsx.
+      * the external diesel figure regenerate — re-drives this to redraw the
+        4-panel validation figure without re-running the xlsx.
 
     The returned ``trips`` are all windows from :func:`find_speed_trips` (for the
     trip shading on the figure); ``seg_metrics`` contains only the trips that pass
@@ -635,13 +635,12 @@ def process_diesel_leg(
     """
     Process one SRFLOGGER_V1 leg: pull Logger channels, speed segmentation, per-trip computation, and generate row tuples.
 
-    This function no longer paints the diesel validation figure — that is
-    the report-visuals skill's job. The ``out_dir`` / ``debug_mode`` /
+    This function paints no diesel validation figure — an external renderer
+    does that afterwards. The ``out_dir`` / ``debug_mode`` /
     ``generate_validation_fig`` / ``leg_idx`` parameters are retained for
-    backward-compatible call sites but are now inert (no figure is drawn here); the
+    backward-compatible call sites but are inert (no figure is drawn here); the
     raw logger CSV is still persisted independently by the upstream
-    ``_save_logger_data`` (gated on ``debug_mode`` in ``_generator``), and figures
-    are rendered later via the report-visuals skill.
+    ``_save_logger_data`` (gated on ``debug_mode`` in ``_generator``).
 
     Returns
     -------

@@ -313,7 +313,7 @@ def _ep_exclude_aux(
 ) -> float:
     """Net traction (auxiliary-load-excluded) energy performance (kWh/km).
 
-    Definition in ``data_analysis_workspace/energy_balance_check/report.md``:
+    Definition (from the project's energy-balance analysis):
 
         EP_exclude_aux = (propulsion − recuperation) / distance
 

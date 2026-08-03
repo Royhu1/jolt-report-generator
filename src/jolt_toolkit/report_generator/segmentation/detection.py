@@ -1,6 +1,6 @@
 """
-Top-level orchestrator: run charge + discharge segmentation for one leg and
-optionally render the validation figure.
+Top-level orchestrator: run charge + discharge segmentation for one leg and,
+when an external painter is supplied, invoke it through the ``figure_hook`` seam.
 
 Behaviour-preserving split of the former ``segment_algorithms.py``.
 """
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Wrapper: run charge + discharge segmentation together + optionally render the validation figure
+# Wrapper: run charge + discharge segmentation together + invoke the figure_hook seam
 # =============================================================================
 def run_segment_detection(
     df_raw: pd.DataFrame,
@@ -80,7 +80,9 @@ def run_segment_detection(
     df_raw   : raw telemetry DataFrame (single leg)
     reg      : vehicle registration (e.g. 'AV24LXK'), used to look up VEHICLE_CONFIG
     suffix   : leg identifier (e.g. '2024-10-01_0000'), used in the figure file name
-    out_dir  : output directory (validation figures saved to out_dir/validation_figures/)
+    out_dir  : output directory; only used to build the ``out_path`` handed to
+                       ``figure_hook`` (``out_dir/validation_figures/…``). This
+                       function never writes it itself
     generate_validation_fig : whether to invoke ``figure_hook`` (default True). Has
                        no effect unless ``figure_hook`` is also provided.
     charge_params    : extra parameter dict passed to find_charge_segments_by_soc
@@ -95,7 +97,7 @@ def run_segment_detection(
                        written for the inspect HTML to do the interactive overlay.
     figure_hook : optional keyword-only external painter. The package no
                        longer imports matplotlib or paints validation figures
-                       itself; the ``report-visuals`` skill supplies its own painter
+                       itself; an external renderer supplies its own painter
                        here so figures come out identical in a single pass. When
                        ``None`` (the default), NO figure is drawn and everything
                        else is unchanged.
@@ -415,7 +417,7 @@ def run_segment_detection(
 
     # ── Validation-figure seam ──────────────────────────────────────────────
     # The package no longer paints figures or imports matplotlib. When an external
-    # ``figure_hook`` is supplied (by the report-visuals skill), it is called here
+    # ``figure_hook`` is supplied (by the external renderer), it is called here
     # — at exactly the point, and with exactly the arguments, the former inline
     # ``plot_leg_validation`` used — so the painter reproduces identical figures in
     # a single pass. With no hook (the default) this block is a no-op.

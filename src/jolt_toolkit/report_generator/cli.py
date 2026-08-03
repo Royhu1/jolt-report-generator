@@ -1,9 +1,8 @@
 """Module entry point for JOLT Excel report generation.
 
-Equivalent to the ``generate-excel-report`` skill's ``generate_report.py``, but
-inside the workspace so a platform deploy can run
-``python -m jolt_toolkit.report_generator.cli -veh <REG> -ds <start> -de <end>``
-without the skill checkout.
+The deployment entry point: ``python -m jolt_toolkit.report_generator.cli
+-veh <REG> -ds <start> -de <end>`` generates one report and returns a process
+exit code (0 success / 2 bad invocation or missing key / 3 unknown vehicle).
 
 Environment (loaded from a ``.env`` in the working directory if present):
   SRF_API_KEY          required — SRF platform API key
@@ -42,18 +41,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Enable debug mode: persist raw artefacts (raw telematics CSV "
-        "+ raw logger/charger CSVs). The package no longer "
-        "draws validation figures or writes inspect HTML here — render "
-        "them via the report-visuals skill.",
+        "+ raw logger/charger CSVs). No validation figures or inspect HTML "
+        "are produced; render those externally from the persisted raw data.",
     )
     parser.add_argument(
         "--raw-only",
         dest="raw_only",
         action="store_true",
         default=False,
-        help="Alias of --debug (both persist raw telematics + raw "
-        "logger/charger CSVs). No figures or inspect HTML are produced "
-        "by the package; render them via the report-visuals skill.",
+        help="Exact alias of --debug (both persist raw telematics + raw "
+        "logger/charger CSVs, and nothing else).",
     )
     parser.add_argument(
         "--fast",
@@ -122,8 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = args.out_dir or f"./excel_report_database/{__version__}"
     logger.info("Report output folder: %s", out_dir)
 
-    # --raw-only still writes the raw CSV + inspect HTML (needs debug_mode) but
-    # skips the baked validation figures.
+    # --raw-only and --debug are equivalent: both persist the raw artefacts and
+    # nothing else. save_figures is a no-op kept for call-site compatibility.
     debug_mode = args.debug or args.raw_only
     save_figures = not args.raw_only
 

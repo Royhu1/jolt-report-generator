@@ -24,7 +24,7 @@ def generate_report(
     ``debug=True`` persists raw artefacts (raw telematics + raw logger/charger
     CSVs). ``save_figures`` is a **no-op**, kept only for backward-compatible
     call sites — the package no longer paints validation figures or writes the
-    inspect HTML; render them via the report-visuals skill.
+    inspect HTML; render them externally from the persisted raw data.
     """
     from jolt_toolkit import __version__
 

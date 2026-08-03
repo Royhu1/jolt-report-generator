@@ -5,10 +5,6 @@ Sub-packages:
   report_generator              report-generation pipeline
   analysis                      shared analysis utilities promoted from the
                                 data_analysis_workspace sub-projects
-
-Analysis figures:
-  data_analysis_workspace/scripts/generate_figures.py  — Excel report analysis
-  figures (standalone script, replacing the former excel_plotter)
 """
 
 # Version of the jolt_toolkit workspace. Read straight from source — the folder

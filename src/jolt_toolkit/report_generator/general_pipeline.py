@@ -7,8 +7,8 @@ General **fallback** pipeline for registrations that are NOT onboarded in
 produce a structurally valid ``jolt_report_<REG>_<start>_<end>.xlsx`` — for both
 EV and diesel — with graceful degradation and clear English log warnings.
 
-Design (see ``.claude/architecture/plan_v310_platform_slim.md`` §2c)
---------------------------------------------------------------------
+Design
+------
 When ``_generator.JOLTReportGenerator.generate_report`` finds ``reg`` is not in
 ``VEHICLE_CONFIG`` it calls :func:`build_runtime_vehicle_config`, which:
 

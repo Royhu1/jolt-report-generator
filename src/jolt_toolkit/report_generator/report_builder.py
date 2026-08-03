@@ -19,14 +19,14 @@ call sites keep working unchanged:
                        home/leg-type classification, Stop-row synthesis, _seg_to_row.
     excel_writer.py  — _write_na, _write_excel_report (+ per-sheet block helpers).
 
-Now owned by the report-visuals skill
+Not provided by this facade (owned by the external renderer)
 ---------------------------------------------------------
 The inspect-HTML viewer left the package with the validation-figure rendering.
 These names are NO LONGER importable from this facade: ``_write_html_viewer``,
 ``_compute_active_dates_from_xlsx``, ``_group_paths_by_date``,
-``_clear_day_validation_figures`` (the viewer + per-day figure bookkeeping and
-the ``assets/inspect_viewer_template.html`` template moved to the report-visuals
-skill). Importing this module NO LONGER imports matplotlib or sets the ``Agg``
+``_clear_day_validation_figures`` — the viewer, the per-day figure bookkeeping
+and the ``inspect_viewer_template.html`` template all live with that renderer.
+Importing this module NO LONGER imports matplotlib or sets the ``Agg``
 backend. New code should import from the sub-modules directly; this facade is
 kept for backward compatibility.
 """

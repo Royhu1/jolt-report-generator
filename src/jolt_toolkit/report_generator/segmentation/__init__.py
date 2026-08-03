@@ -18,11 +18,11 @@ Module map:
   detection           run_segment_detection orchestrator (paints figures only via
                       an external ``figure_hook`` — see the note below)
 
-Now owned by the report-visuals skill
+Not provided here (owned by the external renderer)
 ---------------------------------------------------------
 The per-leg validation-figure painter and its helpers left the package together
 with matplotlib. The following names are NO LONGER importable from
-``segmentation`` (or the ``segment_algorithms`` facade); the report-visuals skill
+``segmentation`` (or the ``segment_algorithms`` facade); the external renderer
 carries them and passes its own painter to ``run_segment_detection(figure_hook=...)``:
 ``plot_leg_validation``, ``_export_overlay_boxes``, ``_build_energy_series``,
 ``_overlay``, ``_mark_anchors_stored``, ``_annotate_overlay_energy_delta``,

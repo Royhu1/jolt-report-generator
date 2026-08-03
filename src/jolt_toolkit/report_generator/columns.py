@@ -74,8 +74,8 @@ HEADERS = (
     # through DIESEL_HEADERS and does not carry this column.
     "Propulsion Energy (kWh)",
     # Net traction energy performance (kWh/km) after removing the
-    # auxiliary / parked loads (HVAC, low-voltage systems, etc.). Definition in
-    # data_analysis_workspace/energy_balance_check/report.md:
+    # auxiliary / parked loads (HVAC, low-voltage systems, etc.). Definition
+    # (from the project's energy-balance analysis):
     #   EP_exclude_aux = (propulsion − recuperation) / distance = EP − auxiliary/distance
     # Equivalent derivation: the SRF identity total = propulsion + auxiliary −
     # recuperation, and a discharge trip's EP = |Energy Change| / dist ≈ total /

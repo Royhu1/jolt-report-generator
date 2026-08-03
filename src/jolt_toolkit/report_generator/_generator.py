@@ -3,7 +3,7 @@ report_generator.py
 =========================
 Orchestrates the fetch -> segment -> write main flow.
 Uses segment_algorithms for the unified charge/discharge segmentation, and
-report_builder to generate the Excel report and optional validation figures.
+report_builder to generate the Excel report.
 """
 
 import datetime
@@ -175,9 +175,9 @@ class JOLTReportGenerator:
         save_figures
             **No-op**, retained only for backward-compatible call
             sites. The package no longer paints validation figures or writes the
-            inspect HTML during generation — that is the report-visuals skill's
-            job (it re-drives ``run_segment_detection`` / the diesel segmentation
-            with its own painter). ``debug_mode`` still governs raw-artefact
+            inspect HTML during generation — an external renderer does that (it
+            re-drives ``run_segment_detection`` / the diesel segmentation with
+            its own painter). ``debug_mode`` still governs raw-artefact
             persistence (raw telematics + raw logger/charger CSVs); this flag no
             longer changes any output.
         """
@@ -573,9 +573,11 @@ class JOLTReportGenerator:
         )
 
     def _preload_charger_meter(self, charger_objects):
-        """Preload charger start/end meter readings into a time-indexed frame for
-        the validation figures (debug_mode only)."""
-        # ── Preload Charger meter data (for the validation figures) ────────
+        """Preload charger start/end meter readings into a time-indexed frame
+        (debug_mode only). It is passed straight through
+        ``run_segment_detection(charger_meter_df=…)`` to an external figure
+        painter when one is supplied; with no painter it goes unused."""
+        # ── Preload Charger meter data (for the external figure seam) ──────
         charger_meter_all = None
         if self.debug_mode and charger_objects:
             meter_rows = []
@@ -621,8 +623,8 @@ class JOLTReportGenerator:
             tqdm(logger_legs, desc="Processing diesel logger legs")
         ):
             try:
-                # process_diesel_leg no longer paints figures (the
-                # report-visuals skill does). The diesel raw logger CSV is written
+                # process_diesel_leg paints no figures (an external renderer
+                # does). The diesel raw logger CSV is written
                 # independently by _save_logger_data (gated on debug_mode). The
                 # out_dir / reg / leg_idx / debug_mode args are retained for
                 # backward-compatible call-site parity but are inert here.
@@ -744,8 +746,8 @@ class JOLTReportGenerator:
                 except Exception:
                     leg_charger_meter = None
 
-            # Figures are painted by the report-visuals skill via an
-            # external figure_hook, never inline here — so no hook is passed and
+            # Figures are painted externally via the figure_hook seam, never
+            # inline here — so no hook is passed and
             # segmentation runs figure-free. The raw CSV was written independently
             # above (gated on debug_mode).
             c_segs, d_segs = run_segment_detection(
@@ -1018,10 +1020,10 @@ class JOLTReportGenerator:
 
         if self.debug_mode:
             # Debug persists raw data only — no figures, no inspect HTML
-            # from the package. Render them via the report-visuals skill.
+            # from the package; both are rendered externally from that raw data.
             logger.info(
-                "Raw data persisted; render validation figures/inspect HTML "
-                "via the report-visuals skill."
+                "Raw data persisted; render validation figures / inspect HTML "
+                "externally from it."
             )
 
         time_write = perf_counter()
