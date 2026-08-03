@@ -1,27 +1,23 @@
 # jolt_toolkit — workspace architecture documentation
 
-> Developer-facing internal architecture reference for the `jolt_toolkit` workspace.
-> Current version **v3.2.0** (workspace form — the toolkit is now a **vendored code
-> workspace**, not an installable package: no wheel, no `pip install`, no console
-> script; runtime deps in [`requirements.txt`](requirements.txt), version in
-> `__init__.py`, history in [`versions.md`](versions.md)). Behaviour is unchanged —
-> the report-generation surface is the report-generation surface (SRF
-> telematics/logger/charger → `.xlsx`), the shared `analysis/` helpers, and the
-> optional weather back-fill post-step; the former AUX tooling
-> (validation-figure/inspect-HTML rendering, dashboards, fine-tuning, C_rr/C_dA
-> identification) lives in the repo's skills / research workspace and consumes this
-> workspace read-only. Project overview & repo-wide usage →
-> [root README.md](../../README.md) | deployment guide → [DEPLOYMENT.md](DEPLOYMENT.md)
-> | version history → [versions.md](versions.md).
+> Developer-facing architecture reference for the `jolt_toolkit` workspace — a
+> **vendored code workspace**, not an installable package: no wheel, no
+> `pip install`, no console script; runtime deps in
+> [`requirements.txt`](requirements.txt), version constant in `__init__.py`.
+> Project overview & repo-wide usage → [root README.md](../../README.md) |
+> deployment contract → [DEPLOYMENT.md](DEPLOYMENT.md) | version history →
+> [versions.md](versions.md).
 
 The workspace generates a formatted Excel report for a vehicle over a date range from
 SRF telematics/logger/charger data: user supplies `REG + start/end` → `.xlsx`. That
 report-generation surface (plus the optional weather back-fill post-step and the
-shared `analysis/` helpers) is **all** it contains.
+shared `analysis/` helpers) is **all** it contains — validation-figure rendering,
+inspect HTML, dashboards, fine-tuning and C_rr/C_dA parameter identification are
+deliberately outside it and consume it read-only.
 
 ## Setup and usage
 
-### Setup (workspace form)
+### Setup
 
 The workspace is vendored, not installed — put `src/` on the import path and install
 its runtime deps:
@@ -42,24 +38,18 @@ OPENWEATHER_API_KEYS=key1,key2     # optional, only for the weather post-step
 
 ### Generate a report
 
-Two equivalent entry points (both take the same flags):
-
 ```bash
-# 1. Module form (the deployment entry point)
 python -m jolt_toolkit.report_generator.cli -veh KY24LHT -ds 2025-01-01 -de 2025-01-31 [--debug] [--fast] [--raw-only] [--out-dir DIR]
-
-# 2. The generate-excel-report skill CLI (used inside the repo workflow)
-python .claude/skills/generate-excel-report/generate_report.py -veh KY24LHT -ds 2025-01-01 -de 2025-01-31
 ```
 
 The report lands at `<out-dir>/<REG>/jolt_report_<REG>_<start>_<end>.xlsx`
-(default `<out-dir>` = `./excel_report_database/<package_version>`).
+(default `<out-dir>` = `./excel_report_database/<version>`).
 
 | Flag | Meaning |
 |------|---------|
-| `-veh` / `--vehicle_registration` | Registration; must exist in `configs/vehicles.json` |
+| `-veh` / `--vehicle_registration` | Registration; a `configs/vehicles.json` entry is optional (see the general fallback pipeline) |
 | `-ds` / `--date_start`, `-de` / `--date_end` | `YYYY-MM-DD`; `date_end` is **inclusive** |
-| `--debug` | Also persist raw artefacts: `raw_telematics/` CSVs + raw logger/charger CSVs. Since v3.1.0 the package draws no figures / inspect HTML — render them via the report-visuals skill |
+| `--debug` | Also persist raw artefacts: `raw_telematics/` CSVs + raw logger/charger CSVs. No figures / inspect HTML — those are rendered outside this workspace |
 | `--raw-only` | Alias of `--debug` (both persist raw artefacts only) |
 | `--fast` | Skip SRF Logger + Charger fetch; FPS telematics only (fast iteration) |
 | `--out-dir` / `--report-output-folder` | Output folder override |
@@ -68,16 +58,11 @@ The `cli.main()` fails fast with a clear message + exit code **2** if `SRF_API_K
 is unset or a required argument is missing (instead of building a client with a null
 key and failing obscurely on the first request).
 
-### Batch generation
-
-`.claude/skills/generate-excel-report/batch_generate.py` reads its fleet + date list
-from the sibling `test_data_config.json` and drives the same generator per vehicle.
-
 ### Public API
 
 ```python
 from jolt_toolkit.report_generator import JOLTReportGenerator, generate_report, patch_logger
-gen = JOLTReportGenerator(report_output_folder="./excel_report_database/3.2.0",
+gen = JOLTReportGenerator(report_output_folder="./excel_report_database",
                           debug_mode=True, fast_mode=False)  # save_figures is a no-op
 gen.generate_report("AV24LXK", "2024-06-01", "2024-09-01")   # returns the xlsx path or None
 
@@ -93,8 +78,7 @@ src/jolt_toolkit/
 ├── configs/                       # shared config (accessed via get_config_path(); JOLT_CONFIG_DIR override)
 │   ├── __init__.py                # get_config_path() — honours env JOLT_CONFIG_DIR, else the workspace configs/ dir
 │   ├── vehicles.json  pipelines.json  plot_config.json
-├── report_generator/              # the report-generation pipeline (CORE + AUX)
-│   │  ── CORE (the deployed REG+dates → xlsx path) ──
+├── report_generator/              # the report-generation pipeline (REG + dates → xlsx)
 │   ├── _generator.py              # JOLTReportGenerator — fetch → segment → correct → write orchestration
 │   ├── general_pipeline.py        # general fallback for un-onboarded regs: SRF-registration spacing resolution + runtime VEHICLE_CONFIG assembly (build_runtime_vehicle_config)
 │   ├── capacity.py                # effective-capacity model: _correct_effective_capacity / _persist_effective_capacity + donor helpers
@@ -119,41 +103,30 @@ src/jolt_toolkit/
 │   │   ├── speed_detection.py     # find_speed_trips / find_discharge_segments_by_speed
 │   │   ├── mass_clustering.py     # cluster_mass_data, split/merge/anchor functions
 │   │   └── detection.py           # run_segment_detection (the unified entry point; figure_hook seam)
-│   ├── segment_algorithms.py      # FACADE re-exporting every name above (unchanged import path)
+│   ├── segment_algorithms.py      # FACADE re-exporting every name above (flat import path)
 │   ├── columns.py                 # HEADERS / DIESEL_HEADERS, leg-type predicates, _row_col_index, _is_nan
 │   ├── charts.py                  # CHART_STYLE, CHART_SPECS_EV/DIESEL, chart_specs_for
 │   ├── row_builder.py             # _seg_to_row + metric helpers, URL builders, postcode cache, Stop synthesis
 │   ├── excel_writer.py            # _write_na, _write_excel_report (report/graphs/definitions sheets)
-│   ├── report_builder.py          # FACADE re-exporting the four modules above (unchanged import path)
+│   ├── report_builder.py          # FACADE re-exporting the four modules above (flat import path)
 │   └── weather_fetcher/
 │       ├── openweather.py         # shared KeyManager / WeatherCache / WeatherFetcher (coarse + fine consume it)
 │       └── fine_grained_patcher.py# FineGrainedWeatherPatcher — in-trip multi-sample (opt-in)
 └── analysis/                      # versioned shared analysis helpers (counters / stats / physics)
 ```
 
-> **v3.1.0 re-homing:** the validation-figure painter (`validation_figure.py`),
-> inspect-HTML viewer (`html_viewer.py` + `assets/inspect_viewer_template.html`),
-> `validation_generator.py`, `rerender_inspect.py`, `finetune.py`,
-> `data_dashboard*.py` (+ vendored `assets/uplot/`), the `scripts/` tools and the
-> `vehicle_params_identificator/` sub-package **left the package**. They now live
-> in the report-visuals / report-finetuner / generate-data-dashboard /
-> generate-excel-report skills and `research_projects/parameter_identify/`.
-> Figures are painted externally via `run_segment_detection(figure_hook=...)` (the
-> diesel painter re-drives the package-side `_segments_from_df`), so the package no
-> longer imports matplotlib.
+### Scope
 
-### Core vs AUX layers
-
-The **core** modules above are the deployed report path (`REG + dates → xlsx`); they
+Every module above is part of the deployed report path (`REG + dates → xlsx`); they
 are English-commented, style-normalised (black/isort) and have public-surface type
-annotations. In v3.1.0 the former **AUX** modules (`finetune`, `validation_generator`,
-the validation-figure painter, the inspect-HTML viewer, `rerender_inspect`,
-`data_dashboard*`, `vehicle_params_identificator/`, the `scripts/` tools) **left the
-package** — they are now owned by the report-visuals / report-finetuner /
-generate-data-dashboard / generate-excel-report skills and
-`research_projects/parameter_identify/`, and consume the package only through its
-public API (e.g. `run_segment_detection(figure_hook=...)`). The `analysis/` helpers
-stay in the package (shared machinery for sub-projects).
+annotations. Validation-figure and inspect-HTML rendering, the data-availability
+dashboards, interactive segmentation fine-tuning and C_rr/C_dA parameter
+identification are **not** part of this workspace: they live outside it and consume
+it read-only through its public API (e.g.
+`run_segment_detection(figure_hook=...)`, and for diesel by re-driving
+`diesel_pipeline._segments_from_df`), which is why matplotlib is not a dependency
+here. The `analysis/` helpers do live here — shared machinery for the repo's
+sub-projects.
 
 ### `analysis/` — shared analysis machinery
 
@@ -169,8 +142,7 @@ sub-project depends only on the versioned toolkit (never on another sub-project)
 ## Report generation pipeline overview
 
 `JOLTReportGenerator.generate_report(reg, date_start, date_end)` is an orchestrator
-over private methods (v3.0.0 decomposition of the former 509-line body — each method
-is a verbatim block extraction, same statements, same order):
+over private methods:
 
 ```
 generate_report(reg, date_start, date_end)
@@ -187,15 +159,15 @@ generate_report(reg, date_start, date_end)
   │                                            + per-period capacity + _insert_stop_rows()
   └─ _write_outputs(...)                    → _persist_effective_capacity() + _write_excel_report()
                                                + [EV,non-fast] ChargerPatcher → LoggerPatcher
-                                               + [debug] raw artefacts only (figures/inspect HTML → report-visuals skill)
+                                               + [debug] raw artefacts only (no figures / inspect HTML)
 ```
 
 Diesel vehicles (`fuel_type=="DIESEL"`) skip the FPS loop, capacity correction and the
 patchers; EV is the default branch.
 
-### General fallback pipeline (un-onboarded registrations, v3.1.0)
+### General fallback pipeline (un-onboarded registrations)
 
-A registration that is **not** in `vehicles.json` no longer raises "onboard first".
+A registration that is **not** in `vehicles.json` still generates a report.
 Before the pipeline runs, `generate_report` builds a **runtime** vehicle config via
 `general_pipeline.build_runtime_vehicle_config(reg, reg_input, ds, de, srf_data=…)` and
 injects it into the in-memory `VEHICLE_CONFIG` (by reference — never written to
@@ -230,7 +202,7 @@ report rather than failing. The runtime config carries an internal `_runtime_fal
 marker (`is_runtime_config()`) so a repeat generation in the same process is still treated
 as a fallback.
 
-### Module responsibilities (core)
+### Module responsibilities
 
 | Module | Responsibility |
 |--------|----------------|
@@ -238,14 +210,14 @@ as a fallback.
 | `data_fetcher.py` | `fetch_events()` — SRF legs + charging events; `date_end` inclusive |
 | `general_pipeline.py` | general fallback for un-onboarded regs: SRF-registration spacing resolution, EV column auto-detection, runtime-config assembly (`build_runtime_vehicle_config()`), `VehicleNotFoundError` |
 | `segmentation/` | unified charge/discharge segmentation (SOC + speed detection, mass cluster/merge/split, energy-source cascade); `run_segment_detection()` is the entry point (paints figures only via an external `figure_hook`) |
-| `segment_algorithms.py` | facade re-exporting the whole `segmentation/` surface (public + internally-used privates) on the historical import path |
-| `capacity.py` | effective-capacity post-processing `_correct_effective_capacity()`, ledger persistence `_persist_effective_capacity()`, donor helpers; re-exposed as `JOLTReportGenerator` staticmethods for back-compat |
+| `segment_algorithms.py` | facade re-exporting the whole `segmentation/` surface (public + internally-used privates) on the flat import path |
+| `capacity.py` | effective-capacity post-processing `_correct_effective_capacity()`, ledger persistence `_persist_effective_capacity()`, donor helpers; also re-exposed as `JOLTReportGenerator` staticmethods |
 | `diesel_pipeline.py` | `process_diesel_leg()` — SRFLOGGER_V1 channels → diesel rows |
 | `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan` |
 | `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows` |
 | `charts.py` | `CHART_SPECS_EV`/`CHART_SPECS_DIESEL` + `CHART_STYLE` (fixed-axis chart specs) |
 | `excel_writer.py` | `_write_na()` (=NA() contract), `_write_excel_report()` (report/graphs/definitions sheets) |
-| `report_builder.py` | facade re-exporting `columns`/`charts`/`row_builder`/`excel_writer` on the historical import path |
+| `report_builder.py` | facade re-exporting `columns`/`charts`/`row_builder`/`excel_writer` on the flat import path |
 | `operators.py` | `derive_leg_operator()` — per-leg `Operator` code from the SRF cascade |
 | `pedal_histogram.py` | EEC2 accelerator / EBC1 brake pedal histograms (discharge, distance > 10 km) |
 | `charger_patcher.py` / `logger_patcher.py` | EV post-write backfill of Charger Link / Logger Link + weather + mass |
@@ -255,7 +227,8 @@ as a fallback.
 
 ## Environment variables
 
-All default to today's repo-root behaviour, so nothing needs setting for a repo-root run:
+All defaults resolve relative to the repository root, so nothing needs setting for a
+repo-root run:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -266,8 +239,9 @@ All default to today's repo-root behaviour, so nothing needs setting for a repo-
 | `SRF_API_ROOT` | SRF REST API root | `https://data.csrf.ac.uk/api/` |
 | `WEATHER_CACHE_FILE` / `WEATHER_CACHE_FILE_FINE` | override the coarse / fine weather cache file paths | `<cache>/.weather_cache.json` / `<cache>/weather/.weather_cache_fine.json` |
 
-Config missing at `get_config_path()` now **fails loudly** (`FileNotFoundError` naming
-the workspace `configs/` + `JOLT_CONFIG_DIR` remedy) instead of silently degrading to `{}`.
+A config file missing at `get_config_path()` **fails loudly** (`FileNotFoundError`
+naming the workspace `configs/` + the `JOLT_CONFIG_DIR` remedy) rather than degrading
+to an empty config.
 
 ## Configuration files
 
@@ -364,15 +338,15 @@ guard).
 | top level | `merge_by_mass` | bool, default `true`; `false` skips `merge_discharge_by_mass` (mass signal locked / same-bucket load). Per-vehicle override in `vehicles.json` wins |
 | top level | `trip_endpoint_anchor` | `"first_motion"` (default) or `"zero_speed"` (extend trip ends to the nearest v==0 within `max_extend_minutes`, for low-rate telematics) |
 | top level | `max_extend_minutes` | float, default 5.0; the zero_speed extension cap |
-| top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). Shared by the Excel `Vehicle Mass (kg)` column, validation Panel 4 (report-visuals skill) and the report-finetuner skill's recompute. Vehicle-level override wins |
+| top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). The value feeds the Excel `Vehicle Mass (kg)` column and is re-used by the external figure / fine-tuning tooling. Vehicle-level override wins |
 | `charge_params` | `plateau_window_min` / `min_soc_rise` / `min_energy_kwh` | charge merge window + SOC-rise + energy thresholds |
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
 | `speed_params` | `speed_threshold_kmh` / `min_stop_duration_min` / `min_trip_duration_min` / `min_soc_drop` / `min_energy_kwh` | speed-branch trip boundaries + lenient SOC/energy checks |
 
-> The `mass_agg` method choices and the per-vehicle rationale (which fence suits a
-> bursty / over-reading GCVW channel) are documented in the git history and changelogs;
-> `mass_agg` **values** for a configured vehicle are owned by the `param-tuner` skill,
-> new-vehicle entries by `vehicle-onboarding`, and the schema/loader by this package.
+> Which fence suits a given vehicle depends on its GCVW channel (a bursty or
+> over-reading channel wants a robust fence). The schema and loader live here; the
+> per-vehicle `mass_agg` **value** is a tuning parameter, owned by the repository's
+> parameter-tuning workflow.
 
 ## Segmentation algorithms
 
@@ -405,15 +379,17 @@ run_segment_detection
 
 Mass: `cluster_mass_data` filters to valid (>0), moving-only (`speed > MOVING_SPEED_THRESHOLD_KMH`)
 samples, then `_agg_mass` applies the configured method; the same value feeds the Excel
-column and validation figure.
+column and the externally-rendered validation figure.
 
 ## Excel output
 
 **Report worksheet** — one segment per row, columns = `HEADERS` (EV, 50) / `DIESEL_HEADERS`
 (diesel, 26). Green = discharge trip, red = charge, white = Stop. Timestamps
 `yyyy-mm-dd hh:mm:ss`; durations `[hh]:mm:ss` (fractional days); SRF links are clickable
-hyperlinks. Some EP cells are the `=NA()` formula (`_write_na` — empty cache; reads back
-as `#N/A` under `data_only`, so downstream readers must guard with a safe-number helper).
+hyperlinks. Empty numeric cells are the `=NA()` formula written with an **empty cached
+value** (`_write_na`): Excel recalculates them to `#N/A`, while non-recalculating readers
+(openpyxl `data_only=True`, `pandas.read_excel`) see a blank → NaN. Downstream readers
+must guard with a safe-number helper that tolerates both.
 
 **Graphs worksheet** — fixed-axis scatter + linear-fit charts from `CHART_SPECS_EV` /
 `CHART_SPECS_DIESEL` (selected by `chart_specs_for(headers)`) + one `CHART_STYLE`, so every
@@ -472,8 +448,8 @@ fuel delta must be strictly > 0 to record (a moving-trip delta of 0 = counter di
 `mass_source=='cvw_trip'` may feed the carry-over slot. Trips are dropped if
 `distance_km < min_trip_distance_km` (1.0) or if `fuel_l`/`veh_mass`/`temp_avg` are all NaN.
 Diesel validation figures (Speed / cumulative fuel / cumulative distance / GCVW) are
-painted by the report-visuals skill's diesel painter, which re-drives the package-side
-`_segments_from_df` — `process_diesel_leg()` draws nothing (since v3.1.0).
+painted outside this workspace by an external diesel painter that re-drives
+`_segments_from_df` here — `process_diesel_leg()` itself draws nothing, in any mode.
 
 Example diesel entry:
 
@@ -503,9 +479,9 @@ destination — quota-friendly, ~2 lookups/trip. **Fine** (`FineGrainedWeatherPa
 `<cache>/.weather_cache.json` 6-tuples; fine writes `<cache>/weather/.weather_cache_fine.json`.
 `WeatherPatcher` refuses a diesel-layout workbook (its hardcoded EV indices would corrupt it).
 
-> The coarse patcher's wind-direction **arithmetic** mean is a documented legacy quirk (it
-> can average 359°/1° to 180°); the fine patcher fixed it with sin/cos averaging. The coarse
-> quirk is left unchanged deliberately (fixing it would change historical numbers).
+> The coarse patcher averages wind direction **arithmetically** (so 359°/1° averages to
+> 180°), where the fine patcher uses sin/cos averaging. The coarse behaviour is retained
+> deliberately: changing it would move already-published historical numbers.
 
 ## SRF API caching
 
@@ -519,37 +495,19 @@ destination — quota-friendly, ~2 lookups/trip. **Fine** (`FineGrainedWeatherPa
 `xlsx_patch_common.make_srf_client()` and shared across `_generator` + the patchers. Caches
 are safe to persist between runs and hit deterministically.
 
-## Debug mode (raw artefacts only — rendering lives outside the package)
+## Debug mode (raw artefacts only — rendering lives outside the workspace)
 
 With `--debug` (or `--raw-only`) the generator persists **raw artefacts only**:
-`raw_telematics/*.csv` per FPS leg plus raw logger/charger CSVs. Since v3.1.0 the
-package draws **no** validation figures and writes **no** inspect HTML — a log line
-points to the **report-visuals skill** (`.claude/skills/report-visuals/`), whose CLI
-paints the canonical one-figure-per-day overlay PNGs (+ `<stem>.boxes.json` sidecars)
-and (re)writes the `inspect_*.html` viewer from those persisted raw artefacts. The
-skill plugs its EV painter into `run_segment_detection(figure_hook=...)` (the
-`figure_hook` seam; contract in `segmentation/detection.py`'s docstring) and re-drives
+`raw_telematics/*.csv` per FPS leg plus raw logger/charger CSVs. It draws **no**
+validation figures and writes **no** inspect HTML; a log line points at the external
+renderer, which paints the canonical one-figure-per-day overlay PNGs (+
+`<stem>.boxes.json` sidecars) and (re)writes the `inspect_*.html` viewer from those
+persisted raw artefacts. It plugs its EV painter into
+`run_segment_detection(figure_hook=...)` (the `figure_hook` seam; contract in
+`segmentation/detection.py`'s docstring) and re-drives
 `diesel_pipeline._segments_from_df` for diesel.
 
 ## Version history
 
-The per-version change history — what shipped in each release, and the "added in
-vX" / "changed in vX" facts that used to be narrated in code comments — lives in
-[`versions.md`](versions.md) (append-forward: every release adds a section there in
-the same change). Highlights relevant to the current architecture:
-
-- **v3.0.0** — behaviour-preserving refactor: `segment_algorithms.py` → the
-  `segmentation/` sub-package and `report_builder.py` →
-  `columns`/`charts`/`row_builder`/`excel_writer`, both fronted by unchanged-path
-  **facades**; the capacity model extracted to `capacity.py`. Every historical import
-  path still resolves (locked by `tests/test_imports.py`). Golden-identical to v2.2.8.
-- **v3.1.0** — platform slimming: the rendering / dashboard / fine-tuning / params code
-  left the package (re-homed to the report-visuals, generate-data-dashboard,
-  report-finetuner skills and `research_projects/parameter_identify/`), matplotlib left
-  the deps, the `figure_hook` seam was added, and the general fallback pipeline
-  (`general_pipeline.py`) began guaranteeing a report for any registration.
-  Onboarded-vehicle output stays golden-identical.
-- **v3.2.0** — workspace form: de-packaged (no wheel / console script / dist metadata);
-  runtime deps in [`requirements.txt`](requirements.txt), version a plain constant in
-  `__init__.py`; version-history comments condensed into `versions.md`. Behaviour
-  unchanged.
+Per-release change history lives in [`versions.md`](versions.md) — the single place
+where it is recorded. Every other document here describes the current state only.

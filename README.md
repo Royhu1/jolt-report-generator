@@ -107,10 +107,5 @@ licence covers the code, **not** the fleet configuration data in `src/jolt_toolk
 (real registrations, measured capacities, commercial operator names) nor the reports this
 software produces; those belong to the JOLT project and its industrial partners.
 
-## Provenance
-
-Extracted from the internal JOLT research project at toolkit version `3.2.0`. Documentation
-inside `src/jolt_toolkit/` occasionally references internal paths (`.claude/skills/...`) for
-capabilities that stayed behind in that project — validation-figure rendering, dashboards,
-report post-processing. Those are not part of this repository and are not required to
-generate a report.
+The toolkit's own version lives in `src/jolt_toolkit/__init__.py`; its history is in
+`src/jolt_toolkit/versions.md`.
