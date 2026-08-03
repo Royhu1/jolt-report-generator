@@ -1,0 +1,123 @@
+{
+  "company_assignment": {
+    "simple": {
+      "N88GNW": "WELCH_TRANSPORT",
+      "EV73SAL": "NESTLE",
+      "YK73WFN": "NESTLE",
+      "KY24LHT": "JLP",
+      "AV24LXK": "KNOWLES",
+      "AV24LXL": "KNOWLES",
+      "AV24LXJ": "KNOWLES",
+      "EX74JXY": "JLP",
+      "YN25RSY": "WJF",
+      "TA70WTL": "WELCH_TRANSPORT",
+      "T88RNW": "WELCH_TRANSPORT",
+      "CMZ6260": "SJG",
+      "YN75NMA": "PORT_EXPRESS_DAIMLER",
+      "YT21EFD": "WJF"
+    },
+    "round_robin": {
+      "EX74JXW": [
+        {
+          "company": "DP_WORLD",
+          "date_start": "20250601",
+          "date_end": "20250823"
+        },
+        {
+          "company": "WJF",
+          "date_start": "20250828",
+          "date_end": "20251231"
+        }
+      ],
+      "LN25NKE": [
+        {
+          "company": "DP_WORLD",
+          "date_start": "20250827",
+          "date_end": "20250929"
+        },
+        {
+          "company": "JLP",
+          "date_start": "20250930",
+          "date_end": "20260109"
+        },
+        {
+          "company": "WELCH_TRANSPORT",
+          "date_start": "20260112",
+          "date_end": "20260407"
+        },
+        {
+          "company": "WS",
+          "date_start": "20260409",
+          "date_end": "20260608"
+        }
+      ]
+    }
+  },
+  "vehicle_specs": {
+    "N88GNW":  { "make": "Renault",       "effective_capacity_kwh": 486.0, "tractor_weight_kg": 10890 },
+    "AV24LXK": { "make": "Volvo",         "effective_capacity_kwh": 324.0, "tractor_weight_kg": 9965  },
+    "AV24LXL": { "make": "Volvo",         "effective_capacity_kwh": 324.0, "tractor_weight_kg": 9965  },
+    "AV24LXJ": { "make": "Volvo",         "effective_capacity_kwh": 324.0, "tractor_weight_kg": 9965  },
+    "EV73SAL": { "make": "Volvo",         "effective_capacity_kwh": 486.0, "tractor_weight_kg": 10500 },
+    "YK73WFN": { "make": "Volvo",         "effective_capacity_kwh": 486.0, "tractor_weight_kg": 10500 },
+    "KY24LHT": { "make": "Volvo",         "effective_capacity_kwh": 486.0, "tractor_weight_kg": 10200 },
+    "EX74JXW": { "make": "Scania",        "effective_capacity_kwh": 511.68,"tractor_weight_kg": 10800 },
+    "EX74JXY": { "make": "Scania",        "effective_capacity_kwh": 561.6, "tractor_weight_kg": 10800 },
+    "YN25RSY": { "make": "Mercedes-Benz", "effective_capacity_kwh": 598.5, "tractor_weight_kg": 11564 },
+    "TA70WTL": { "make": "Renault", "effective_capacity_kwh": 375.0, "tractor_weight_kg": 10890 },
+    "T88RNW":  { "make": "Renault", "effective_capacity_kwh": 190.0, "tractor_weight_kg": 11000 },
+    "CMZ6260": { "make": "Volvo",   "effective_capacity_kwh": 459.0, "tractor_weight_kg": 10500 },
+    "YN75NMA": { "make": "Mercedes-Benz", "effective_capacity_kwh": 510.0, "tractor_weight_kg": 11564 },
+    "LN25NKE": { "make": "DAF",           "effective_capacity_kwh": 462.0, "tractor_weight_kg": 10500 }
+  },
+  "trailer_weights_kg": {
+    "NESTLE": 9000,
+    "WELCH_TRANSPORT": 7000,
+    "KNOWLES": 7000,
+    "JLP": 7000,
+    "DP_WORLD": 7000,
+    "WJF": 7000,
+    "SJG": 7000,
+    "PORT_EXPRESS_DAIMLER": 7000,
+    "WS": 7000
+  },
+  "colors": {
+    "company": {
+      "WELCH_TRANSPORT": "blue",
+      "KNOWLES": "purple",
+      "NESTLE": "red",
+      "JLP": "green",
+      "DP_WORLD": "#FFAE00",
+      "WJF": "#A7CC01",
+      "SJG": "#E91E63",
+      "PORT_EXPRESS_DAIMLER": "#9C27B0",
+      "WS": "#00BCD4"
+    },
+    "vehicle_override": {
+      "YN25RSY": "#00E1FF",
+      "EX74JXY": "#8B4513"
+    },
+    "oem_by_make": {
+      "Volvo": "#1f77b4",
+      "Scania": "#ff7f0e",
+      "Mercedes-Benz": "#2ca02c",
+      "Renault": "#d62728",
+      "DAF": "#17becf"
+    },
+    "oem_by_label": {
+      "OEM A": "#1f77b4",
+      "OEM B": "#ff7f0e",
+      "OEM C": "#2ca02c",
+      "OEM D": "#d62728",
+      "OEM E": "#17becf"
+    }
+  },
+  "oem_anonymization": {
+    "Volvo": "OEM A",
+    "Scania": "OEM B",
+    "Mercedes-Benz": "OEM C",
+    "Renault": "OEM D",
+    "DAF": "OEM E"
+  },
+  "driving_leg_types": ["Outbound", "Return", "In Transit", "Round Trip", "In House"]
+}

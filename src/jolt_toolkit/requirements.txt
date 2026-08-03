@@ -1,0 +1,30 @@
+# jolt_toolkit workspace — runtime dependencies
+#
+# The report-generation surface (REG + dates -> xlsx) needs exactly these at run
+# time. They live inside the folder so the vendored workspace is self-describing:
+# copy src/jolt_toolkit, `pip install -r src/jolt_toolkit/requirements.txt`, put
+# src/ on the import path. The package does NOT import matplotlib / scikit-learn
+# (those are skill/research code — see the repo-level requirements.txt).
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0                # analysis.stats (OLS/FE regression utilities)
+
+# HTTP requests + SRF API client
+requests>=2.31.0
+srf_client
+
+# Reverse geocoding (postcode lookup)
+geopy
+
+# File locking (weather cache + vehicles.json capacity-ledger write-back)
+filelock>=3.12.0
+
+# Environment variables (.env loading in the CLI)
+python-dotenv>=1.0.0
+
+# Report generation
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+tqdm>=4.65.0

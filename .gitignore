@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+
+# secrets — never commit
+.env
+
+# generated output + caches
+excel_report_database/
+cache/
+
+# local Chinese reading copies (internal convention)
+*.zh.md
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

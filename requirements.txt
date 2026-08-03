@@ -1,0 +1,3 @@
+# Runtime dependencies of the report generator.
+# They live with the vendored workspace so the folder is self-describing.
+-r src/jolt_toolkit/requirements.txt

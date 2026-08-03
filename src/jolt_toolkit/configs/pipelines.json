@@ -1,0 +1,379 @@
+{
+  "default_soc": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "default_speed": {
+    "branch": "speed",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "volvo_soc_00": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "volvo_speed_00": {
+    "branch": "speed",
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "volvo_soc_01": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "volvo_speed_01": {
+    "branch": "speed",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    },
+    "mass_agg": "iqr_median"
+  },
+  "volvo_soc_02": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "volvo_speed_02": {
+    "branch": "speed",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    },
+    "mass_agg": "iqr_median"
+  },
+  "volvo_soc_03": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "volvo_speed_03": {
+    "branch": "speed",
+    "merge_by_mass": false,
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "volvo_speed_04": {
+    "branch": "speed",
+    "merge_by_mass": false,
+    "trip_endpoint_anchor": "zero_speed",
+    "max_extend_minutes": 5.0,
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 15.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "renault_soc": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "renault_speed": {
+    "branch": "speed",
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "scania_soc_00": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "scania_speed_00": {
+    "branch": "speed",
+    "merge_by_mass": false,
+    "trip_endpoint_anchor": "zero_speed",
+    "max_extend_minutes": 15.0,
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "scania_soc_01": {
+    "branch": "soc",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "scania_speed_01": {
+    "branch": "speed",
+    "merge_by_mass": false,
+    "trip_endpoint_anchor": "zero_speed",
+    "max_extend_minutes": 15.0,
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 10.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "mercedes_soc": {
+    "branch": "soc",
+    "min_trip_distance_km": 10.0,
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 20,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    }
+  },
+  "mercedes_speed": {
+    "branch": "speed",
+    "merge_by_mass": false,
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 31.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 2.0,
+      "min_energy_kwh": 1.0
+    }
+  },
+  "daf_speed_00": {
+    "branch": "speed",
+    "mass_agg": "iqr_median",
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 15,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 5.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 1.0,
+      "min_energy_kwh": 1.0
+    }
+  }
+}
