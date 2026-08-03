@@ -10,4 +10,4 @@ Sub-packages:
 # Version of the jolt_toolkit workspace. Read straight from source — the folder
 # is vendored, not installed, so there is no dist metadata to look up. Bump here
 # and append a section to versions.md on every release (see git-workflow.md).
-__version__ = "3.2.0"
+__version__ = "3.2.1"

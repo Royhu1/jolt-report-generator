@@ -192,3 +192,44 @@
   file; the README's v3.0.0/v3.1.0 migration-notes sections were replaced by a pointer
   here. Behaviour is unchanged (verified: full test suite + fast EV / short diesel
   smokes 0-diff vs the standing goldens).
+
+## 3.2.1 — defect fixes found by the test suite; docs describe the present only
+
+- **Data namespace: unchanged, still `3.2.0/`.** This release cannot alter a reported
+  cell, verified by cell-by-cell comparison against the previous release over the EV
+  (YK73WFN, fast) and diesel (WU70GLV, full) smoke sets: **0 differing cells** in both.
+  The documentation and comment changes are additionally AST-proven to have left every
+  syntax tree identical after masking string constants. See the exception in
+  `.claude/rules/git-workflow.md` "Line 1".
+- Four defects, all surfaced by a new behavioural test suite:
+  - `excel_writer` treated a NaN in a hyperlink column as a present link (NaN is truthy),
+    crashing in `xlsxwriter.write_url` instead of writing `=NA()`. Unreachable from the
+    shipped row builders, which write `None`, but a trap for any new row source.
+  - A merged discharge segment could carry a tz-aware `start_time` beside a tz-naive
+    `end_time` (and likewise for the anchor pair, which `_recompute_anchors` leaves alone
+    when anchors already exist). Both pairs are normalised to tz-aware UTC; the instants
+    are unchanged, only the dtype.
+  - `_logger_df_from_csv` never renamed the Channel-2 GPS columns to `_lat`/`_lon`, so a
+    diesel report regenerated from cached CSVs silently lost the origin/destination
+    coordinates the live path produced. Both paths now share the `_GPS_LAT`/`_GPS_LON`
+    constants; over WU70GLV 2025-09-01..04, 40/40 legs went from NULL to matching the
+    live path to six decimal places.
+  - `compute_pedal_histogram` raised `TypeError` on a length-less argument instead of
+    returning `None` as documented.
+- Documentation now describes only current behaviour: the per-release migration notes and
+  the inline "added in / since vX.Y" annotations are gone from `README.md` and
+  `DEPLOYMENT.md` (this file remains the sole home of version history), and `DEPLOYMENT.md`
+  was rewritten as a terse integration contract. Corrected while doing so: an `=NA()` cell
+  shows `#N/A` only when Excel recalculates — non-recalculating readers (openpyxl
+  `data_only`, pandas) see an empty cell → NaN; the old "may leak a 0" caveat described
+  behaviour predating `_write_na`.
+- Comments, docstrings and one log line no longer point at anything outside this
+  workspace. Three of the corrected statements were wrong rather than merely stale: the
+  `_generator` module docstring claimed it produced validation figures, `detection.py`
+  claimed `out_dir` is where figures are written (the package writes none — `out_dir` only
+  composes the path handed to `figure_hook`), and `__init__.py` referenced an analysis
+  script that no longer exists. `--raw-only` is documented as the exact alias of `--debug`
+  that it is.
+- Known and deliberately not fixed: post-split discharge segments bypass the
+  `cap_lo`/`cap_hi` plausibility guard (36 of 42,860 counter-sourced legs, 0.08 %, no
+  effect on fleet statistics). Registered with its evidence as pending issue 007.
