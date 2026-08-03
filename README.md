@@ -86,6 +86,13 @@ Read **`src/jolt_toolkit/DEPLOYMENT.md`**. The points most likely to bite:
 - **Do not "fix" the known quirks** listed at the end of `DEPLOYMENT.md` (the EV vs diesel
   column layouts, the append-only column contract, the `=NA()` empty-cell convention).
 
+## Licence
+
+Source code: **Apache License 2.0** (see `LICENSE`). Note the scope limit in `NOTICE` — the
+licence covers the code, **not** the fleet configuration data in `src/jolt_toolkit/configs/`
+(real registrations, measured capacities, commercial operator names) nor the reports this
+software produces; those belong to the JOLT project and its industrial partners.
+
 ## Provenance
 
 Extracted from the internal JOLT research project at toolkit version `3.2.0`. Documentation

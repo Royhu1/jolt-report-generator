@@ -1,0 +1,23 @@
+jolt-report-generator
+Copyright 2026 University of Cambridge
+
+Developed for the JOLT (Joint Operators Logistics Trial) project, Cambridge Sustainable
+Road Freight (SRF).
+
+This product includes software developed at the University of Cambridge.
+
+--------------------------------------------------------------------------------
+Scope of the Apache-2.0 licence in this repository
+--------------------------------------------------------------------------------
+
+The Apache License 2.0 in LICENSE covers the **source code** of this repository.
+
+It does NOT grant rights over the **fleet configuration and operational data** carried
+in `src/jolt_toolkit/configs/` (`vehicles.json`, `pipelines.json`, `plot_config.json`),
+which identify real vehicles, their measured battery capacities and the commercial
+operators running them. That content belongs to the JOLT project and its industrial
+partners, is provided here solely so the generator can run against the trial fleet, and
+must not be redistributed or published without the project's agreement.
+
+The same applies to any report artefacts produced by this software: they contain
+partner-operational data and are subject to the project's data-sharing arrangements.
