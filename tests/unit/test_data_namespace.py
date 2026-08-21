@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import re
 
-from jolt_toolkit import DATA_NAMESPACE, __version__, report_generator
-from jolt_toolkit.report_generator import cli, paths
-from jolt_toolkit.report_generator._generator import JOLTReportGenerator
+import report_generator
+from report_generator import DATA_NAMESPACE, __version__, cli, paths
+from report_generator._generator import JOLTReportGenerator
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -40,7 +40,7 @@ def test_both_constants_are_semver_and_the_namespace_never_leads():
 
 def test_default_report_root_is_read_at_call_time(monkeypatch):
     assert paths.default_report_root() == f"./excel_report_database/{DATA_NAMESPACE}"
-    monkeypatch.setattr("jolt_toolkit.DATA_NAMESPACE", "9.9.9")
+    monkeypatch.setattr("report_generator.DATA_NAMESPACE", "9.9.9")
     assert paths.default_report_root() == "./excel_report_database/9.9.9"
 
 
@@ -72,7 +72,7 @@ def test_the_convenience_wrapper_defaults_to_the_namespace(monkeypatch):
 def test_the_module_cli_defaults_to_the_namespace(monkeypatch):
     monkeypatch.setenv("SRF_API_KEY", "test-only")
     monkeypatch.setattr(
-        "jolt_toolkit.report_generator._generator.JOLTReportGenerator", _FakeGenerator
+        "report_generator._generator.JOLTReportGenerator", _FakeGenerator
     )
     assert cli.main(["-veh", "YK73WFN", "-ds", "2026-01-01", "-de", "2026-01-02"]) == 0
     assert _FakeGenerator.last.kwargs["report_output_folder"] == (

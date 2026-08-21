@@ -14,9 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from jolt_toolkit import configs
-from jolt_toolkit.report_generator import paths
-from jolt_toolkit.report_generator.segmentation import constants
+from report_generator import configs, paths
+from report_generator.segmentation import constants
 
 # ── get_cache_dir ────────────────────────────────────────────────────────────
 
@@ -79,7 +78,7 @@ def test_get_config_path_empty_override_uses_the_package(monkeypatch):
 
 
 def test_packaged_config_directory_holds_the_three_jsons():
-    for name in ("vehicles.json", "pipelines.json", "plot_config.json"):
+    for name in ("vehicles.json", "pipelines.json"):
         assert (configs.CONFIGS_DIR / name).exists()
 
 
@@ -118,9 +117,9 @@ def test_load_json_failure_does_not_disturb_the_loaded_config(monkeypatch, tmp_p
 
 
 def test_vehicle_config_is_shared_by_reference_across_the_package():
-    from jolt_toolkit.report_generator import segment_algorithms
-    from jolt_toolkit.report_generator.capacity import VEHICLE_CONFIG as cap_cfg
-    from jolt_toolkit.report_generator.segmentation import detection
+    from report_generator import segment_algorithms
+    from report_generator.capacity import VEHICLE_CONFIG as cap_cfg
+    from report_generator.segmentation import detection
 
     assert segment_algorithms.VEHICLE_CONFIG is constants.VEHICLE_CONFIG
     assert detection.VEHICLE_CONFIG is constants.VEHICLE_CONFIG
@@ -128,7 +127,7 @@ def test_vehicle_config_is_shared_by_reference_across_the_package():
 
 
 def test_frozen_config_injection_is_visible_everywhere(frozen_configs):
-    from jolt_toolkit.report_generator import segment_algorithms
+    from report_generator import segment_algorithms
 
     assert "EVSPD01" in segment_algorithms.VEHICLE_CONFIG
     assert "evspd01_speed" in segment_algorithms.PIPELINE_CONFIGS

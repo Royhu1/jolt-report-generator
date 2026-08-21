@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator import diesel_pipeline as dp
-from jolt_toolkit.report_generator.columns import DIESEL_HEADERS
+from report_generator import diesel_pipeline as dp
+from report_generator.columns import DIESEL_HEADERS
 
 TRIP_METRIC_KEYS = {
     "start_time",
@@ -60,7 +60,7 @@ def test_logger_csv_rebuilds_into_a_utc_indexed_frame(diesel_fixture_frame):
 def test_logger_frame_gains_the_time_column_for_speed_segmentation(
     diesel_fixture_frame,
 ):
-    from jolt_toolkit.report_generator.segment_algorithms import TIME_COL
+    from report_generator.segment_algorithms import TIME_COL
 
     frame, _cfg = diesel_fixture_frame
     assert TIME_COL in frame.columns
@@ -468,7 +468,7 @@ def test_diesel_row_length_contract(diesel_segments):
 
 
 def test_diesel_row_field_placement(diesel_segments):
-    from jolt_toolkit.report_generator.columns import _row_col_index
+    from report_generator.columns import _row_col_index
 
     _trips, seg_metrics, _cfg = diesel_segments
     seg = seg_metrics[0]
@@ -494,7 +494,7 @@ def test_diesel_row_field_placement(diesel_segments):
 
 
 def test_diesel_row_cumulative_distance_advances_across_trips(diesel_segments):
-    from jolt_toolkit.report_generator.columns import _row_col_index
+    from report_generator.columns import _row_col_index
 
     _trips, seg_metrics, _cfg = diesel_segments
     seg = seg_metrics[0]

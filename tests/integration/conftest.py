@@ -15,7 +15,7 @@ def run_fixture_segmentation(frozen_configs, load_raw_telematics):
     vehicle's ``nominal_kwh`` (x0.5 / x2.0), no figure hook is passed and no
     output directory is given, so the call is pure computation.
     """
-    from jolt_toolkit.report_generator.segment_algorithms import run_segment_detection
+    from report_generator.segment_algorithms import run_segment_detection
 
     def _run(alias: str, **overrides):
         nominal = frozen_configs["vehicles"][alias].get("nominal_kwh")
@@ -52,7 +52,7 @@ def load_golden(fixtures_dir):
 @pytest.fixture
 def diesel_fixture_frame(frozen_configs, raw_fixture_path):
     """The DSL01 logger CSV rebuilt into the diesel pipeline's DataFrame shape."""
-    from jolt_toolkit.report_generator import diesel_pipeline as dp
+    from report_generator import diesel_pipeline as dp
 
     cfg = frozen_configs["vehicles"]["DSL01"]
     frame = dp._logger_df_from_csv(raw_fixture_path("DSL01"), cfg)

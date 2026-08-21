@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from jolt_toolkit.report_generator import charts
-from jolt_toolkit.report_generator.columns import DIESEL_HEADERS, HEADERS
+from report_generator import charts
+from report_generator.columns import DIESEL_HEADERS, HEADERS
 
 X_HDR = "Vehicle Mass (kg)"
 Y_HDR = "Energy Performance (kWh/km)"

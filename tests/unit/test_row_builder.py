@@ -15,8 +15,8 @@ import pandas as pd
 import pytest
 from geopy import Point as GeoPoint
 
-from jolt_toolkit.report_generator import row_builder as rb
-from jolt_toolkit.report_generator.columns import (
+from report_generator import row_builder as rb
+from report_generator.columns import (
     DIESEL_HEADERS,
     HEADERS,
     _row_col_index,

@@ -14,10 +14,10 @@ import pandas as pd
 import pytest
 from openpyxl import Workbook
 
-from jolt_toolkit.report_generator import weather_patcher as wp
-from jolt_toolkit.report_generator import xlsx_patch_common as xpc
-from jolt_toolkit.report_generator.columns import DIESEL_HEADERS, HEADERS
-from jolt_toolkit.report_generator.weather_fetcher.openweather import (
+from report_generator import weather_patcher as wp
+from report_generator import xlsx_patch_common as xpc
+from report_generator.columns import DIESEL_HEADERS, HEADERS
+from report_generator.weather_fetcher.openweather import (
     KeyManager,
     WeatherCache,
 )

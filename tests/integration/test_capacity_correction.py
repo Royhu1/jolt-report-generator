@@ -18,7 +18,7 @@ import math
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.capacity import (
+from report_generator.capacity import (
     _IDX_BPOWER,
     _IDX_CAP,
     _IDX_DISTANCE,
@@ -35,7 +35,7 @@ from jolt_toolkit.report_generator.capacity import (
     CAP_WINDOW_HALF_DAYS,
     _correct_effective_capacity,
 )
-from jolt_toolkit.report_generator.columns import HEADERS
+from report_generator.columns import HEADERS
 
 
 def _row(

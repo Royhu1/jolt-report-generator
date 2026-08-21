@@ -20,7 +20,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.segmentation.mass_clustering import (
+from report_generator.segmentation.mass_clustering import (
     _enforce_anchor_ordering,
 )
 
@@ -247,7 +247,7 @@ def test_segmentation_does_not_mutate_the_callers_frame(
 ):
     """The augmented ``mass_cluster`` / ``mass_moving`` columns land on an
     internal copy, never on the DataFrame the caller handed in."""
-    from jolt_toolkit.report_generator.segment_algorithms import run_segment_detection
+    from report_generator.segment_algorithms import run_segment_detection
 
     frame = load_raw_telematics(alias)
     snapshot = frame.copy(deep=True)

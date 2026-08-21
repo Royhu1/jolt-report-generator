@@ -12,14 +12,18 @@ here.
 ## What you get
 
 ```
-src/jolt_toolkit/          # the code workspace (this is the whole deliverable)
-├── report_generator/      # fetch → segment → correct → write pipeline + CLI + patchers
-├── configs/               # vehicles.json / pipelines.json / plot_config.json
-├── analysis/              # shared analysis helpers (counter interpolation, stats, physics)
-├── README.md              # architecture reference — module map, config schema, data model
-├── DEPLOYMENT.md          # ← START HERE for deployment: env vars, state, caches, contracts
-├── versions.md            # version history
-└── requirements.txt       # runtime dependencies (travels with the folder)
+report_generator/          # the package — this is the whole deliverable
+├── _generator.py          # the fetch → segment → correct → write pipeline
+├── cli.py                 # python -m report_generator.cli
+├── segmentation/          # trip / charge detection, mass clustering
+├── weather_fetcher/       # optional OpenWeather back-fill
+├── configs/               # vehicles.json (+ capacity ledger) / pipelines.json
+├── version.py             # __version__ + DATA_NAMESPACE
+└── …                      # capacity model, row builder, Excel writer, patchers
+doc/
+├── architecture.md        # module map, config schema, data model, pipeline walkthrough
+├── deployment.md          # ← START HERE for deployment: env vars, state, caches, contracts
+└── versions.md            # version history
 tests/                     # offline test suite (no network, no API key needed)
 ├── unit/                  # pure functions, hand-computed expectations
 ├── integration/           # multi-module runs over anonymised real telematics
@@ -28,9 +32,10 @@ tests/                     # offline test suite (no network, no API key needed)
 
 ## Not a pip package
 
-`jolt_toolkit` is a **vendored code workspace**, deliberately not installable: there is no
-`[project]` table, no wheel, no console script. Vendor the folder and put `src/` on the
-import path. `pyproject.toml` here carries tool configuration only (black / isort / pytest).
+`report_generator` is a **vendored code workspace**, deliberately not installable: there is
+no `[project]` table, no wheel, no console script. Copy the folder and put its parent
+directory on the import path. `pyproject.toml` here carries tool configuration only
+(black / isort / pytest).
 
 ## Quickstart
 
@@ -40,15 +45,15 @@ pip install -r requirements.txt
 
 cp .env.example .env                              # then fill in SRF_API_KEY
 
-# generate one report (PYTHONPATH puts the workspace on the import path)
-PYTHONPATH=src python -m jolt_toolkit.report_generator.cli \
+# generate one report (run from the repository root, which is on the import path)
+python -m report_generator.cli \
     -veh YK73WFN -ds 2025-03-01 -de 2025-06-01 --out-dir ./out
 ```
 
 Or from your own code:
 
 ```python
-from jolt_toolkit.report_generator import JOLTReportGenerator
+from report_generator import JOLTReportGenerator
 
 gen = JOLTReportGenerator(report_output_folder="./out")
 gen.generate_report("YK73WFN", "2025-03-01", "2025-06-01")
@@ -56,15 +61,15 @@ gen.generate_report("YK73WFN", "2025-03-01", "2025-06-01")
 
 Output: `<out_dir>/<REG>/jolt_report_<REG>_<start>_<end>.xlsx`.
 
-Instead of exporting `PYTHONPATH` on every call, you can drop a `.pth` file containing the
-absolute path to `src/` into your environment's `site-packages` — then `import jolt_toolkit`
-just works.
+From anywhere other than the repository root, put the root on the import path —
+`PYTHONPATH=/path/to/jolt-report-generator`, or a `.pth` file holding that absolute path
+dropped into your environment's `site-packages`.
 
 ## Verify the install
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # ~40 s, ~950 tests, fully offline
+pytest                     # ~45 s, ~950 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network and no writable state outside the temp directory:
@@ -80,16 +85,17 @@ fixtures contain and how they were de-identified.
 
 ## Vehicles that are not configured
 
-`configs/vehicles.json` holds the tuned parameters for the known fleet. A registration that
-is **not** in it still produces a report: the generator resolves the vehicle from the SRF
-platform, auto-detects its telematics columns and falls back to generic segmentation
-parameters. Both electric and diesel vehicles are covered, and the only hard failure is a
-registration that does not exist on the SRF platform at all. Report quality is generic
-rather than tuned — see `src/jolt_toolkit/README.md` for what degrades.
+`report_generator/configs/vehicles.json` holds the tuned parameters for the known fleet. A
+registration that is **not** in it still produces a report: the generator resolves the
+vehicle from the SRF platform, auto-detects its telematics columns and falls back to
+generic segmentation parameters. Both electric and diesel vehicles are covered, and the
+only hard failure is a registration that does not exist on the SRF platform at all. Report
+quality is generic rather than tuned — see [doc/architecture.md](doc/architecture.md) for
+what degrades.
 
 ## Before you deploy
 
-Read **`src/jolt_toolkit/DEPLOYMENT.md`**. The points most likely to bite:
+Read **[doc/deployment.md](doc/deployment.md)**. The points most likely to bite:
 
 - **Writable state** — the effective-capacity ledger is persisted back into
   `configs/vehicles.json`. Point `JOLT_CONFIG_DIR` at a writable copy of `configs/`.
@@ -97,15 +103,17 @@ Read **`src/jolt_toolkit/DEPLOYMENT.md`**. The points most likely to bite:
   re-runs dramatically cheaper, and the weather cache protects a paid API quota.
 - **No paid API calls by default** — report generation uses the SRF logger's own weather
   channel. The OpenWeather back-fill is a separate, optional, quota-consuming post-step.
-- **Do not "fix" the known quirks** listed at the end of `DEPLOYMENT.md` (the EV vs diesel
-  column layouts, the append-only column contract, the `=NA()` empty-cell convention).
+- **Do not "fix" the known quirks** listed at the end of `doc/deployment.md` (the EV vs
+  diesel column layouts, the append-only column contract, the `=NA()` empty-cell
+  convention).
 
 ## Licence
 
 Source code: **Apache License 2.0** (see `LICENSE`). Note the scope limit in `NOTICE` — the
-licence covers the code, **not** the fleet configuration data in `src/jolt_toolkit/configs/`
-(real registrations, measured capacities, commercial operator names) nor the reports this
-software produces; those belong to the JOLT project and its industrial partners.
+licence covers the code, **not** the fleet configuration data in
+`report_generator/configs/` (real registrations, measured capacities, commercial operator
+names) nor the reports this software produces; those belong to the JOLT project and its
+industrial partners.
 
-The toolkit's own version lives in `src/jolt_toolkit/__init__.py`; its history is in
-`src/jolt_toolkit/versions.md`.
+The version constants live in `report_generator/version.py`; the history is in
+[doc/versions.md](doc/versions.md).

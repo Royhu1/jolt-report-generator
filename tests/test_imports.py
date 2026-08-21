@@ -17,51 +17,47 @@ import pytest
 
 # ── Core modules + facades that must import cleanly ──────────────────────────
 CORE_MODULES = [
-    "jolt_toolkit",
-    "jolt_toolkit.configs",
-    "jolt_toolkit.analysis",
-    "jolt_toolkit.analysis.counters",
-    "jolt_toolkit.analysis.physics",
-    "jolt_toolkit.analysis.stats",
-    "jolt_toolkit.report_generator",
-    "jolt_toolkit.report_generator._generator",
-    "jolt_toolkit.report_generator.capacity",
-    "jolt_toolkit.report_generator.capacity_backfill",
-    "jolt_toolkit.report_generator.charger_patcher",
-    "jolt_toolkit.report_generator.logger_patcher",
-    "jolt_toolkit.report_generator.weather_patcher",
-    "jolt_toolkit.report_generator.weather_patch",
-    "jolt_toolkit.report_generator.diesel_pipeline",
-    "jolt_toolkit.report_generator.data_fetcher",
-    "jolt_toolkit.report_generator.data_class",
-    "jolt_toolkit.report_generator.operators",
-    "jolt_toolkit.report_generator.pedal_histogram",
-    "jolt_toolkit.report_generator.energy_correction",
-    "jolt_toolkit.report_generator.paths",
-    "jolt_toolkit.report_generator.cli",
-    "jolt_toolkit.report_generator.xlsx_patch_common",
+    "report_generator",
+    "report_generator.version",
+    "report_generator.configs",
+    "report_generator._generator",
+    "report_generator.capacity",
+    "report_generator.capacity_backfill",
+    "report_generator.charger_patcher",
+    "report_generator.logger_patcher",
+    "report_generator.weather_patcher",
+    "report_generator.weather_patch",
+    "report_generator.diesel_pipeline",
+    "report_generator.data_fetcher",
+    "report_generator.data_class",
+    "report_generator.operators",
+    "report_generator.pedal_histogram",
+    "report_generator.energy_correction",
+    "report_generator.paths",
+    "report_generator.cli",
+    "report_generator.xlsx_patch_common",
     # report_builder split + facade (v3.1.0: html_viewer moved to the
     # report-visuals skill)
-    "jolt_toolkit.report_generator.report_builder",
-    "jolt_toolkit.report_generator.columns",
-    "jolt_toolkit.report_generator.charts",
-    "jolt_toolkit.report_generator.row_builder",
-    "jolt_toolkit.report_generator.excel_writer",
+    "report_generator.report_builder",
+    "report_generator.columns",
+    "report_generator.charts",
+    "report_generator.row_builder",
+    "report_generator.excel_writer",
     # segmentation split + facade (v3.1.0: validation_figure moved to the
     # report-visuals skill)
-    "jolt_toolkit.report_generator.segment_algorithms",
-    "jolt_toolkit.report_generator.segmentation",
-    "jolt_toolkit.report_generator.segmentation.constants",
-    "jolt_toolkit.report_generator.segmentation.timeutil",
-    "jolt_toolkit.report_generator.segmentation.mass_aggregation",
-    "jolt_toolkit.report_generator.segmentation.soc_detection",
-    "jolt_toolkit.report_generator.segmentation.speed_detection",
-    "jolt_toolkit.report_generator.segmentation.mass_clustering",
-    "jolt_toolkit.report_generator.segmentation.detection",
+    "report_generator.segment_algorithms",
+    "report_generator.segmentation",
+    "report_generator.segmentation.constants",
+    "report_generator.segmentation.timeutil",
+    "report_generator.segmentation.mass_aggregation",
+    "report_generator.segmentation.soc_detection",
+    "report_generator.segmentation.speed_detection",
+    "report_generator.segmentation.mass_clustering",
+    "report_generator.segmentation.detection",
     # weather infra
-    "jolt_toolkit.report_generator.weather_fetcher",
-    "jolt_toolkit.report_generator.weather_fetcher.openweather",
-    "jolt_toolkit.report_generator.weather_fetcher.fine_grained_patcher",
+    "report_generator.weather_fetcher",
+    "report_generator.weather_fetcher.openweather",
+    "report_generator.weather_fetcher.fine_grained_patcher",
 ]
 
 # ── §0.2 compatibility surface: name -> original import module ───────────────
@@ -148,21 +144,21 @@ def test_module_imports(modname):
 
 @pytest.mark.parametrize("name", SEGMENT_ALGORITHMS_NAMES)
 def test_segment_algorithms_facade_name(name):
-    mod = importlib.import_module("jolt_toolkit.report_generator.segment_algorithms")
+    mod = importlib.import_module("report_generator.segment_algorithms")
     assert hasattr(mod, name), f"segment_algorithms.{name} no longer resolves"
 
 
 @pytest.mark.parametrize("name", REPORT_BUILDER_NAMES)
 def test_report_builder_facade_name(name):
-    mod = importlib.import_module("jolt_toolkit.report_generator.report_builder")
+    mod = importlib.import_module("report_generator.report_builder")
     assert hasattr(mod, name), f"report_builder.{name} no longer resolves"
 
 
 @pytest.mark.parametrize("name", CAPACITY_NAMES)
 def test_capacity_backcompat_name(name):
     # Importable both from capacity (new home) and _generator (re-export).
-    cap = importlib.import_module("jolt_toolkit.report_generator.capacity")
-    gen = importlib.import_module("jolt_toolkit.report_generator._generator")
+    cap = importlib.import_module("report_generator.capacity")
+    gen = importlib.import_module("report_generator._generator")
     assert hasattr(cap, name), f"capacity.{name} missing"
     assert hasattr(gen, name), f"_generator re-export of {name} missing"
 
@@ -170,8 +166,8 @@ def test_capacity_backcompat_name(name):
 def test_correct_effective_capacity_staticmethod_identity():
     """recompute_from_cache calls JOLTReportGenerator._correct_effective_capacity;
     it must be the same object as the capacity module function."""
-    cap = importlib.import_module("jolt_toolkit.report_generator.capacity")
-    gen = importlib.import_module("jolt_toolkit.report_generator._generator")
+    cap = importlib.import_module("report_generator.capacity")
+    gen = importlib.import_module("report_generator._generator")
     assert (
         gen.JOLTReportGenerator._correct_effective_capacity
         is cap._correct_effective_capacity
@@ -185,9 +181,9 @@ def test_correct_effective_capacity_staticmethod_identity():
 def test_vehicle_config_object_identity():
     """VEHICLE_CONFIG / PIPELINE_CONFIGS are loaded once and shared by reference
     across the facade, the segmentation constants module, and report_builder."""
-    sa = importlib.import_module("jolt_toolkit.report_generator.segment_algorithms")
-    rb = importlib.import_module("jolt_toolkit.report_generator.report_builder")
-    sc = importlib.import_module("jolt_toolkit.report_generator.segmentation.constants")
+    sa = importlib.import_module("report_generator.segment_algorithms")
+    rb = importlib.import_module("report_generator.report_builder")
+    sc = importlib.import_module("report_generator.segmentation.constants")
     assert sa.VEHICLE_CONFIG is sc.VEHICLE_CONFIG
     assert sa.VEHICLE_CONFIG is rb.VEHICLE_CONFIG
     assert sa.PIPELINE_CONFIGS is sc.PIPELINE_CONFIGS
@@ -255,27 +251,27 @@ DIESEL_REMOVED_NAMES = [
 
 @pytest.mark.parametrize("name", SEGMENT_ALGORITHMS_REMOVED)
 def test_segment_algorithms_removed_surface(name):
-    sa = importlib.import_module("jolt_toolkit.report_generator.segment_algorithms")
-    seg = importlib.import_module("jolt_toolkit.report_generator.segmentation")
+    sa = importlib.import_module("report_generator.segment_algorithms")
+    seg = importlib.import_module("report_generator.segmentation")
     assert not hasattr(sa, name), f"segment_algorithms.{name} should be gone in v3.1.0"
     assert not hasattr(seg, name), f"segmentation.{name} should be gone in v3.1.0"
 
 
 @pytest.mark.parametrize("name", REPORT_BUILDER_REMOVED)
 def test_report_builder_removed_surface(name):
-    rb = importlib.import_module("jolt_toolkit.report_generator.report_builder")
+    rb = importlib.import_module("report_generator.report_builder")
     assert not hasattr(rb, name), f"report_builder.{name} should be gone in v3.1.0"
 
 
 @pytest.mark.parametrize("name", DIESEL_KEPT_NAMES)
 def test_diesel_pipeline_kept_name(name):
-    mod = importlib.import_module("jolt_toolkit.report_generator.diesel_pipeline")
+    mod = importlib.import_module("report_generator.diesel_pipeline")
     assert hasattr(mod, name), f"diesel_pipeline.{name} must stay (skills import it)"
 
 
 @pytest.mark.parametrize("name", DIESEL_REMOVED_NAMES)
 def test_diesel_pipeline_removed_name(name):
-    mod = importlib.import_module("jolt_toolkit.report_generator.diesel_pipeline")
+    mod = importlib.import_module("report_generator.diesel_pipeline")
     assert not hasattr(mod, name), f"diesel_pipeline.{name} should be gone in v3.1.0"
 
 
@@ -285,7 +281,7 @@ def test_run_segment_detection_accepts_figure_hook():
     own painter here)."""
     import inspect
 
-    sa = importlib.import_module("jolt_toolkit.report_generator.segment_algorithms")
+    sa = importlib.import_module("report_generator.segment_algorithms")
     sig = inspect.signature(sa.run_segment_detection)
     assert "figure_hook" in sig.parameters
     p = sig.parameters["figure_hook"]
@@ -304,13 +300,13 @@ def test_package_import_does_not_require_matplotlib():
 
     code = (
         "import sys; "
-        "import jolt_toolkit.report_generator._generator; "
+        "import report_generator._generator; "
         "assert 'matplotlib' not in sys.modules, "
         "'importing the package pulled in matplotlib'"
     )
     # Propagate the parent's resolved sys.path so the subprocess imports the SAME
-    # jolt_toolkit as this test session (pytest prepends the worktree ``src`` via
-    # the pyproject ``pythonpath`` option, which is not otherwise inherited).
+    # package as this test session (pytest prepends the repository root via the
+    # pyproject ``pythonpath`` option, which is not otherwise inherited).
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
     result = subprocess.run(

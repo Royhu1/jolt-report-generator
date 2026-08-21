@@ -1,16 +1,16 @@
-# Tool configuration only. Since v3.2.0 jolt_toolkit is a vendored code
-# workspace, NOT an installable package: there is no build-system / [project]
-# table, no wheel, and no console script. Runtime dependencies live in
-# src/jolt_toolkit/requirements.txt (so they travel with the vendored folder),
-# the package version in src/jolt_toolkit/__init__.py, and the version history
-# in src/jolt_toolkit/versions.md. `pip install .` here intentionally fails —
-# put src/ on the import path (PYTHONPATH=src or a site-packages .pth) instead.
+# Tool configuration only. ``report_generator`` is a vendored code workspace,
+# NOT an installable package: there is no build-system / [project] table, no
+# wheel and no console script. Runtime dependencies are in requirements.txt,
+# the version constants in report_generator/version.py, and the version history
+# in doc/versions.md. `pip install .` here intentionally fails — put the
+# repository root on the import path (PYTHONPATH=. or a site-packages .pth)
+# instead.
 
 [tool.pytest.ini_options]
-# Put the src-layout package on sys.path for the test session (pytest >=7 built-in
+# Put the repository root on sys.path for the test session (pytest >=7 built-in
 # rootdir-relative prepend) so `pytest` from the repo root works without any
 # install or exported PYTHONPATH.
-pythonpath = ["src"]
+pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.black]

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from jolt_toolkit.report_generator.operators import _resolve_operator_from_config
-from jolt_toolkit.report_generator.segmentation.timeutil import _to_utc
+from report_generator.operators import _resolve_operator_from_config
+from report_generator.segmentation.timeutil import _to_utc
 
 
 class _FakeLeg:
@@ -89,7 +89,9 @@ def test_the_window_upper_bound_stays_exclusive_across_offsets():
 
 def test_a_naive_leg_start_is_treated_as_utc():
     vehicles = {
-        "TEST003": {"operators": [{"code": "OP", "from": "2026-07-01T00:00:00Z", "to": None}]}
+        "TEST003": {
+            "operators": [{"code": "OP", "from": "2026-07-01T00:00:00Z", "to": None}]
+        }
     }
     naive = _FakeLeg(pd.Timestamp("2026-07-01 06:00:00"))
     assert _resolve_operator_from_config("TEST003", naive, vehicles) == "OP"

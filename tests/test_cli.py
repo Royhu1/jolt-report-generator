@@ -1,6 +1,6 @@
-"""CLI contract for the ``python -m jolt_toolkit.report_generator.cli`` entry point.
+"""CLI contract for the ``python -m report_generator.cli`` entry point.
 
-Exercised via subprocess (a real ``python -m jolt_toolkit.report_generator.cli``
+Exercised via subprocess (a real ``python -m report_generator.cli``
 invocation) so the __main__ / argparse / fail-fast path is tested end-to-end.
 No network and no SRF key: the ``--help`` path exits before any client build, and
 the missing-key path is the documented rc-2 fast-fail (checked before the SRF
@@ -13,15 +13,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Absolute path to the worktree src, prepended on PYTHONPATH so the subprocess
-# imports THIS tree (not any editable install pointing elsewhere).
-SRC = str(Path(__file__).resolve().parents[1] / "src")
-CLI_MODULE = "jolt_toolkit.report_generator.cli"
+# Absolute path to the repository root, prepended on PYTHONPATH so the
+# subprocess imports THIS tree (not any other copy on the path).
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
+CLI_MODULE = "report_generator.cli"
 
 
 def _run(args, *, scrub_key, cwd=None):
     env = dict(os.environ)
-    env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     if scrub_key:
@@ -46,7 +46,7 @@ def test_help_exits_zero():
     out = proc.stdout + proc.stderr
     assert "usage" in out.lower()
     # The module-form prog string (no console script since v3.2.0).
-    assert "python -m jolt_toolkit.report_generator.cli" in out
+    assert "python -m report_generator.cli" in out
 
 
 def test_missing_srf_api_key_exits_2():

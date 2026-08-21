@@ -19,17 +19,17 @@ import openpyxl
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.columns import (
+from report_generator.columns import (
     DIESEL_HEADERS,
     HEADERS,
     _row_col_index,
 )
-from jolt_toolkit.report_generator.report_builder import (
+from report_generator.report_builder import (
     _insert_stop_rows,
     _seg_to_row,
     _write_excel_report,
 )
-from jolt_toolkit.report_generator.segment_algorithms import _ANCHOR_PRIVATE_KEYS
+from report_generator.segment_algorithms import _ANCHOR_PRIVATE_KEYS
 
 CHARGE_RE = re.compile(r"^(AC|DC|Charge|Mix|estimated)", re.IGNORECASE)
 
@@ -217,7 +217,7 @@ def test_ev_row_background_colour_encodes_the_leg_class(ev_workbook):
 
 
 def test_ev_graphsdata_holds_the_filtered_chart_points(ev_workbook):
-    from jolt_toolkit.report_generator.charts import CHART_SPECS_EV
+    from report_generator.charts import CHART_SPECS_EV
 
     out_path, _rows, with_stops = ev_workbook
     wb = openpyxl.load_workbook(out_path)
@@ -254,7 +254,7 @@ def test_ev_every_data_row_has_the_row_tuple_length(ev_workbook):
 
 @pytest.fixture
 def diesel_workbook(tmp_path, diesel_fixture_frame):
-    from jolt_toolkit.report_generator import diesel_pipeline as dp
+    from report_generator import diesel_pipeline as dp
 
     frame, cfg = diesel_fixture_frame
     _trips, seg_metrics = dp._segments_from_df(frame, cfg, source="fixture")
@@ -350,7 +350,7 @@ def test_diesel_definitions_sheet_is_the_diesel_glossary(diesel_workbook):
 
 
 def test_diesel_graphsdata_uses_the_diesel_chart_specs(diesel_workbook):
-    from jolt_toolkit.report_generator.charts import CHART_SPECS_DIESEL
+    from report_generator.charts import CHART_SPECS_DIESEL
 
     out_path, _rows, _with_stops = diesel_workbook
     data_ws = openpyxl.load_workbook(out_path)["GraphsData"]

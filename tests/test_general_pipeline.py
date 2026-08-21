@@ -18,9 +18,9 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator import general_pipeline as gp
-from jolt_toolkit.report_generator._generator import JOLTReportGenerator
-from jolt_toolkit.report_generator.capacity import (
+from report_generator import general_pipeline as gp
+from report_generator._generator import JOLTReportGenerator
+from report_generator.capacity import (
     _IDX_BPOWER,
     _IDX_CAP,
     _IDX_DISTANCE,
@@ -36,8 +36,8 @@ from jolt_toolkit.report_generator.capacity import (
     _IDX_START,
     _correct_effective_capacity,
 )
-from jolt_toolkit.report_generator.columns import HEADERS
-from jolt_toolkit.report_generator.report_builder import (
+from report_generator.columns import HEADERS
+from report_generator.report_builder import (
     DIESEL_HEADERS,
     _write_excel_report,
 )

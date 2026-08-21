@@ -14,7 +14,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from jolt_toolkit.report_generator import operators as ops
+from report_generator import operators as ops
 
 
 def _leg(description=None, trip_uri="trip://1", start_time=None):

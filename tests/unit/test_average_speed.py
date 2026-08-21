@@ -15,9 +15,9 @@ import math
 import numpy as np
 import pandas as pd
 
-from jolt_toolkit.report_generator import row_builder
-from jolt_toolkit.report_generator.columns import HEADERS, _row_col_index
-from jolt_toolkit.report_generator.row_builder import _average_speed_kmh
+from report_generator import row_builder
+from report_generator.columns import HEADERS, _row_col_index
+from report_generator.row_builder import _average_speed_kmh
 
 
 def test_average_speed_uses_the_full_elapsed_segment_duration():

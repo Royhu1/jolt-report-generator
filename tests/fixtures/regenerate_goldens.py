@@ -28,19 +28,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 import pandas as pd  # noqa: E402
 
-# Importing the root conftest sets JOLT_CACHE_DIR (and the other offline env
-# vars) BEFORE jolt_toolkit is imported — exactly as it does under pytest — and
-# gives us the one shared segment serialiser.
+# Importing the test-suite conftest sets JOLT_CACHE_DIR (and the other offline
+# env vars) BEFORE report_generator is imported — exactly as it does under
+# pytest — and gives us the one shared segment serialiser.
 import conftest as _conftest  # noqa: E402  (import order is deliberate)
-from jolt_toolkit.report_generator import diesel_pipeline as dp  # noqa: E402
-from jolt_toolkit.report_generator.segment_algorithms import (  # noqa: E402
+from report_generator import diesel_pipeline as dp  # noqa: E402
+from report_generator.segment_algorithms import (  # noqa: E402
     run_segment_detection,
 )
-from jolt_toolkit.report_generator.segmentation import constants  # noqa: E402
+from report_generator.segmentation import constants  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent
 EXPECTED = FIXTURES / "expected"

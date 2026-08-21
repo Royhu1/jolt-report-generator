@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jolt_toolkit.report_generator.columns import (
+from report_generator.columns import (
     DIESEL_HEADERS,
     HEADERS,
     _is_nan,

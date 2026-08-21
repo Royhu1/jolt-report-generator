@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator import pedal_histogram as ph
+from report_generator import pedal_histogram as ph
 
 #  idx   0  1   2   3   4   5  6   7   8   9  10
 #  val   0  5  20  40  30  10  0  15  35  20   5

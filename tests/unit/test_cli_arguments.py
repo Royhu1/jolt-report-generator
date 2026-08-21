@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from jolt_toolkit.report_generator import cli
+from report_generator import cli
 
 # ── _build_parser ────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ def test_parser_out_dir_has_a_legacy_alias():
 
 def test_parser_prog_is_the_module_form():
     # Since v3.2.0 there is no console script; the help text must say so.
-    assert cli._build_parser().prog == "python -m jolt_toolkit.report_generator.cli"
+    assert cli._build_parser().prog == "python -m report_generator.cli"
 
 
 def test_parser_rejects_an_unknown_flag():
@@ -98,7 +98,7 @@ def _restore_root_logging():
 @pytest.fixture
 def captured_generator(monkeypatch):
     """Replace ``JOLTReportGenerator`` so ``main`` builds no SRF client."""
-    import jolt_toolkit.report_generator._generator as gen_mod
+    import report_generator._generator as gen_mod
 
     instance = Mock()
     instance.generate_report.return_value = "/tmp/report.xlsx"
@@ -160,7 +160,7 @@ def test_main_out_dir_defaults_to_the_data_namespace(captured_generator):
     bumps ``__version__`` while leaving the namespace pointing at the tree that
     already holds the reports.
     """
-    from jolt_toolkit import DATA_NAMESPACE
+    from report_generator import DATA_NAMESPACE
 
     factory, _ = captured_generator
     cli.main(BASE_ARGS)
@@ -203,7 +203,7 @@ def test_main_missing_api_key_exits_2_before_building_a_client(
 
 
 def test_main_returns_3_for_a_vehicle_that_does_not_exist_on_srf(captured_generator):
-    from jolt_toolkit.report_generator.general_pipeline import VehicleNotFoundError
+    from report_generator.general_pipeline import VehicleNotFoundError
 
     _, instance = captured_generator
     instance.generate_report.side_effect = VehicleNotFoundError("nope")

@@ -15,7 +15,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.segmentation import constants, detection
+from report_generator.segmentation import constants, detection
 
 
 @pytest.fixture

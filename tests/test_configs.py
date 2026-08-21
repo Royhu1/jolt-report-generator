@@ -1,4 +1,4 @@
-"""Config schema contract: the three JSONs load and satisfy what the generator reads.
+"""Config schema contract: both JSONs load and satisfy what the generator reads.
 
 The required-field list is derived from the actual hard ``cfg[...]`` accesses in the
 generation path (not invented):
@@ -14,9 +14,9 @@ import json
 
 import pytest
 
-from jolt_toolkit.configs import get_config_path
+from report_generator.configs import get_config_path
 
-CONFIG_FILES = ["vehicles.json", "pipelines.json", "plot_config.json"]
+CONFIG_FILES = ["vehicles.json", "pipelines.json"]
 
 
 def _load(name):

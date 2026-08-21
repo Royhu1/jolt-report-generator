@@ -21,11 +21,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from jolt_toolkit.report_generator import _generator as gen_mod
-from jolt_toolkit.report_generator import general_pipeline as gp
-from jolt_toolkit.report_generator._generator import JOLTReportGenerator
-from jolt_toolkit.report_generator.data_class import ServerData
-from jolt_toolkit.report_generator.segmentation import constants
+from report_generator import _generator as gen_mod
+from report_generator import general_pipeline as gp
+from report_generator._generator import JOLTReportGenerator
+from report_generator.data_class import ServerData
+from report_generator.segmentation import constants
 
 DS = datetime.datetime(2025, 4, 1)
 DE = datetime.datetime(2025, 4, 15)
@@ -295,7 +295,7 @@ def test_generate_report_propagates_vehicle_not_found(monkeypatch, offline_gener
 def test_empty_runtime_report_is_structurally_complete(monkeypatch, offline_generator):
     import openpyxl
 
-    from jolt_toolkit.report_generator.columns import HEADERS
+    from report_generator.columns import HEADERS
 
     monkeypatch.setattr(
         gen_mod, "build_runtime_vehicle_config", Mock(return_value=dict(RUNTIME_CFG))

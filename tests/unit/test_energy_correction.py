@@ -13,13 +13,13 @@ import math
 
 import pytest
 
-from jolt_toolkit.report_generator.energy_correction import (
+from report_generator.energy_correction import (
     ELEVATION_ENERGY_EFFICIENCY,
     GRAVITY_M_S2,
     JOULES_PER_KWH,
     battery_elevation_energy_kwh,
 )
-from jolt_toolkit.report_generator.row_builder import _corrected_energy_perf
+from report_generator.row_builder import _corrected_energy_perf
 
 _MASS_KG = 30_000.0
 _ELEVATION_M = 100.0
@@ -34,9 +34,9 @@ def test_the_module_constants_are_the_documented_ones():
 
 def test_uphill_demand_divides_by_the_efficiency():
     """Climbing costs the battery more than the potential energy gained."""
-    assert battery_elevation_energy_kwh(
-        _ELEVATION_M, _MASS_KG, 0.9
-    ) == pytest.approx(_RAW_POTENTIAL_KWH / 0.9, abs=1e-9)
+    assert battery_elevation_energy_kwh(_ELEVATION_M, _MASS_KG, 0.9) == pytest.approx(
+        _RAW_POTENTIAL_KWH / 0.9, abs=1e-9
+    )
 
 
 def test_downhill_recovery_multiplies_by_the_efficiency():

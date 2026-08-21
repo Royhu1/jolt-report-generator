@@ -39,7 +39,7 @@ These are **real** telematics rows, anonymised before being committed:
 - **Driver identity**: all `driver1_*` columns were dropped.
 - **Vehicle identity**: the registration is replaced by an alias (`EVSPD01`,
   `EVSOC01`, `EVMAD01`, `DSL01`) in both the file path and the `vehicleId` column.
-  The aliases do not appear in the live `src/jolt_toolkit/configs/vehicles.json`.
+  The aliases do not appear in the live `report_generator/configs/vehicles.json`.
 - Everything else — timestamps, SOC, energy counters, odometer, mass, speed,
   weather — is **verbatim real data**. That is the point: the numbers the tests
   assert on are numbers the pipeline really produces in the field.
@@ -53,7 +53,7 @@ SRF spelling.
 `configs/vehicles.json` and `configs/pipelines.json` are **frozen copies**, keyed by
 the aliases above and derived from the real fleet entries at the time the fixtures
 were captured. They are deliberately **not** the live
-`src/jolt_toolkit/configs/*.json`, and they must **never** be "kept in sync" with
+`report_generator/configs/*.json`, and they must **never** be "kept in sync" with
 them.
 
 *Why:* segmentation parameters are tuned per vehicle and get retuned. If the tests
@@ -64,7 +64,7 @@ configs means a golden diff always means **the code changed**.
 
 Practical consequences:
 
-- Adding, removing or retuning a real vehicle in `src/jolt_toolkit/configs/` must
+- Adding, removing or retuning a real vehicle in `report_generator/configs/` must
   **not** touch these files.
 - A change to the config **schema** (a new field the loader requires, a renamed
   key) SHOULD be mirrored here — that is a code change, and the fixtures exist to

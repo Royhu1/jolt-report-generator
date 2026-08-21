@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.segmentation import constants
-from jolt_toolkit.report_generator.segmentation import mass_aggregation as ma
+from report_generator.segmentation import constants
+from report_generator.segmentation import mass_aggregation as ma
 
 SEL = pd.Series([10.0, 12.0, 14.0, 20.0, 100.0])
 

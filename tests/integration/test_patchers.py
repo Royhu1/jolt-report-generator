@@ -20,14 +20,14 @@ import openpyxl
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.charger_patcher import (
+from report_generator.charger_patcher import (
     ChargerPatcher,
     _find_charger_matches,
     merge_save_charger_transactions,
 )
-from jolt_toolkit.report_generator.columns import HEADERS, _row_col_index
-from jolt_toolkit.report_generator.logger_patcher import LoggerPatcher
-from jolt_toolkit.report_generator.report_builder import _write_excel_report
+from report_generator.columns import HEADERS, _row_col_index
+from report_generator.logger_patcher import LoggerPatcher
+from report_generator.report_builder import _write_excel_report
 
 # Windows inside the DSL01 fixture's 05:30:33 - 05:39:36 span.
 CHARGE_START = pd.Timestamp("2025-10-07T05:31:00Z")

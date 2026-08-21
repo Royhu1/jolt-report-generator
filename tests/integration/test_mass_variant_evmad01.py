@@ -20,9 +20,9 @@ import copy
 import pandas as pd
 import pytest
 
-from jolt_toolkit.report_generator.segmentation import constants
-from jolt_toolkit.report_generator.segmentation.mass_aggregation import resolve_mass_agg
-from jolt_toolkit.report_generator.segmentation.mass_clustering import cluster_mass_data
+from report_generator.segmentation import constants
+from report_generator.segmentation.mass_aggregation import resolve_mass_agg
+from report_generator.segmentation.mass_clustering import cluster_mass_data
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def merge_enabled_alias(monkeypatch, frozen_configs):
 def test_merge_by_mass_false_really_keeps_the_split(
     run_fixture_segmentation, merge_enabled_alias, load_raw_telematics, frozen_configs
 ):
-    from jolt_toolkit.report_generator.segment_algorithms import run_segment_detection
+    from report_generator.segment_algorithms import run_segment_detection
 
     _charge_off, discharge_off = run_fixture_segmentation("EVMAD01")
 
@@ -66,7 +66,7 @@ def test_merge_by_mass_false_really_keeps_the_split(
 def test_merge_on_produces_longer_legs(
     run_fixture_segmentation, merge_enabled_alias, load_raw_telematics, frozen_configs
 ):
-    from jolt_toolkit.report_generator.segment_algorithms import run_segment_detection
+    from report_generator.segment_algorithms import run_segment_detection
 
     _c_off, discharge_off = run_fixture_segmentation("EVMAD01")
     nominal = frozen_configs["vehicles"]["EVMAD01"]["nominal_kwh"]
@@ -111,7 +111,7 @@ def test_mad_tw_mean_and_iqr_median_disagree_on_the_real_fixture(
 ):
     """The two aggregators must actually produce different masses here —
     otherwise the vehicle-level override would be untested in practice."""
-    from jolt_toolkit.report_generator.row_builder import _get_vehicle_mass
+    from report_generator.row_builder import _get_vehicle_mass
 
     frame = load_raw_telematics("EVMAD01")
     _charge, discharge = run_fixture_segmentation("EVMAD01")

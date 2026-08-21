@@ -12,15 +12,11 @@ import importlib
 
 import pytest
 
-from jolt_toolkit.report_generator.report_builder import DIESEL_HEADERS, HEADERS
+from report_generator.report_builder import DIESEL_HEADERS, HEADERS
 
-charger_patcher = importlib.import_module(
-    "jolt_toolkit.report_generator.charger_patcher"
-)
-logger_patcher = importlib.import_module("jolt_toolkit.report_generator.logger_patcher")
-weather_patcher = importlib.import_module(
-    "jolt_toolkit.report_generator.weather_patcher"
-)
+charger_patcher = importlib.import_module("report_generator.charger_patcher")
+logger_patcher = importlib.import_module("report_generator.logger_patcher")
+weather_patcher = importlib.import_module("report_generator.weather_patcher")
 
 # (module, _COL_* attribute, HEADERS column name) — the contract each patcher relies on.
 COLUMN_CONTRACTS = [

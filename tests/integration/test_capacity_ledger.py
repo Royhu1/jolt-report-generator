@@ -16,8 +16,8 @@ import json
 
 import pytest
 
-from jolt_toolkit.report_generator import capacity_backfill as cb
-from jolt_toolkit.report_generator.capacity import (
+from report_generator import capacity_backfill as cb
+from report_generator.capacity import (
     _IDX_CAP,
     _IDX_DISTANCE,
     _IDX_ESOURCE,
@@ -25,9 +25,9 @@ from jolt_toolkit.report_generator.capacity import (
     MIN_DONORS,
     _persist_effective_capacity,
 )
-from jolt_toolkit.report_generator.columns import HEADERS, _row_col_index
-from jolt_toolkit.report_generator.report_builder import _write_excel_report
-from jolt_toolkit.report_generator.segmentation import constants
+from report_generator.columns import HEADERS, _row_col_index
+from report_generator.report_builder import _write_excel_report
+from report_generator.segmentation import constants
 
 REG = "LEDGER01"
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jolt_toolkit.report_generator import capacity as cap
+from report_generator import capacity as cap
 
 # ── _cap_is_valid ────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ def test_resolve_soc_fallback_bad_override_falls_back_to_the_default():
 
 
 def test_row_idx_offsets_by_the_leg_number_column():
-    from jolt_toolkit.report_generator.columns import HEADERS
+    from report_generator.columns import HEADERS
 
     assert HEADERS[0] == "Leg Number"
     for name in ("Leg Type", "Battery Capacity (kWh)", "Energy Source"):

@@ -41,7 +41,7 @@ class Recorder:
 
 @pytest.fixture
 def hook_run(frozen_configs, load_raw_telematics):
-    from jolt_toolkit.report_generator.segment_algorithms import run_segment_detection
+    from report_generator.segment_algorithms import run_segment_detection
 
     def _run(alias, out_dir, **overrides):
         nominal = frozen_configs["vehicles"][alias].get("nominal_kwh")

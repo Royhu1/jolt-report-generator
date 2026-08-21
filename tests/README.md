@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~40 s, 952 tests, fully offline
+pytest                       # ~45 s, 947 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -10,8 +10,8 @@ No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
 ## Layout
 
 ```
-conftest.py                  # AT THE REPO ROOT — env setup + shared fixtures (see below)
 tests/
+├── conftest.py              # env setup + shared fixtures (see below)
 ├── test_imports.py          # v3.0.0 import / facade contract (module paths, re-exports)
 ├── test_column_contracts.py # HEADERS / DIESEL_HEADERS vs the patchers' hard-coded indices
 ├── test_configs.py          # the LIVE configs load and satisfy what the generator reads
@@ -28,20 +28,20 @@ hand-computed from the documented formula. `integration/` holds tests that run
 several modules together over the real (anonymised) fixture data and assert on
 artefacts — segment dicts, xlsx workbooks, the `vehicles.json` ledger.
 
-The five files directly under `tests/` predate this suite and are unchanged.
+The five contract files directly under `tests/` predate this suite.
 
 | Area | Tests |
 |------|-------|
-| Existing contract suite (`tests/*.py`) | 251 |
-| `unit/` | 476 |
+| Existing contract suite (`tests/*.py`) | 247 |
+| `unit/` | 475 |
 | `integration/` | 225 |
 
 ## The offline guarantee
 
-Four things enforce it, all in the **root** `conftest.py`:
+Four things enforce it, all in the top-level `tests/conftest.py`:
 
 1. **`JOLT_CACHE_DIR` is set at module import time**, before pytest imports any
-   test module and therefore before `jolt_toolkit` is first imported. This
+   test module and therefore before `report_generator` is first imported. This
    matters: `report_generator/row_builder.py` evaluates `get_cache_dir()` at
    IMPORT time to build `_POSTCODE_CACHE_PATH` and immediately loads that cache.
    Setting the variable later would be too late. The directory is a `mkdtemp` and
@@ -55,11 +55,11 @@ Four things enforce it, all in the **root** `conftest.py`:
    postcode lookup; `ChargerPatcher(srf_data=...)` / `LoggerPatcher(srf_data=...)`
    take a client; both patchers' `patch_file` accept pre-loaded windows / legs;
    `run_segment_detection` is pure. Where a client must exist,
-   `jolt_toolkit.report_generator._generator.make_srf_client` is monkeypatched
+   `report_generator._generator.make_srf_client` is monkeypatched
    (that is the single construction site — `_generator` imports the name into its
    own namespace, so patch it *there*).
 
-## Shared fixtures (root `conftest.py`)
+## Shared fixtures (`tests/conftest.py`)
 
 | Fixture | Gives you |
 |---------|-----------|
@@ -75,7 +75,7 @@ Four things enforce it, all in the **root** `conftest.py`:
 And in `tests/integration/conftest.py`: `run_fixture_segmentation`, `load_golden`,
 `diesel_fixture_frame`.
 
-**Never assert behaviour against the live `src/jolt_toolkit/configs/*.json`.** Use
+**Never assert behaviour against the live `report_generator/configs/*.json`.** Use
 the frozen fixture configs, or a synthetic entry injected with
 `monkeypatch.setitem(constants.VEHICLE_CONFIG, "UTVEH01", cfg)`. A parameter
 retune on a real vehicle must not be able to turn this suite red.
@@ -99,11 +99,11 @@ cannot pass unnoticed. Full details in `tests/fixtures/README.md`.
 ## Coverage
 
 ```bash
-pytest --cov=jolt_toolkit --cov-report=term-missing
+pytest --cov=report_generator --cov-report=term-missing
 ```
 
 Currently ~70 % of statements. The report-generation core is well covered
-(`charts`, `columns`, `pedal_histogram`, `paths`, `configs`, `analysis/*`,
+(`charts`, `columns`, `pedal_histogram`, `paths`, `configs`, `energy_correction`,
 `xlsx_patch_common` at 100 %; `capacity` 96 %, `excel_writer` 99 %,
 `mass_aggregation` 99 %, `cli` 94 %, `speed_detection` 89 %, `mass_clustering`
 87 %, `detection` 85 %, `row_builder` 84 %, `soc_detection` 80 %).
