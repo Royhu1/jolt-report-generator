@@ -36,6 +36,7 @@ CORE_MODULES = [
     "jolt_toolkit.report_generator.data_class",
     "jolt_toolkit.report_generator.operators",
     "jolt_toolkit.report_generator.pedal_histogram",
+    "jolt_toolkit.report_generator.energy_correction",
     "jolt_toolkit.report_generator.paths",
     "jolt_toolkit.report_generator.cli",
     "jolt_toolkit.report_generator.xlsx_patch_common",

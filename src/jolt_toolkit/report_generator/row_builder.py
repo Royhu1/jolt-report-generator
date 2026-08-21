@@ -32,6 +32,11 @@ from jolt_toolkit.report_generator.columns import (
     HEADERS,
     _row_col_index,
 )
+from jolt_toolkit.report_generator.energy_correction import (
+    ELEVATION_ENERGY_EFFICIENCY,
+    GRAVITY_M_S2,
+    battery_elevation_energy_kwh,
+)
 from jolt_toolkit.report_generator.paths import get_cache_dir
 from jolt_toolkit.report_generator.pedal_histogram import (
     EBC1_COL,
@@ -346,7 +351,7 @@ def _get_elevation_diff(
     return round(float(vals.iloc[-1] - vals.iloc[0]), 1)
 
 
-_G = 9.81  # m/s²
+_G = GRAVITY_M_S2  # backward-compatible report-builder export
 
 
 def _corrected_energy_perf(
@@ -355,16 +360,19 @@ def _corrected_energy_perf(
     """
     Elevation-corrected energy performance (kWh/km).
 
-    Formula: E_gravity = m * g * Δh / 3,600,000 (kWh)
-    Uphill (Δh > 0) deducts the gravitational work, downhill (Δh < 0) adds the recovery.
-    corrected = (|delta_energy| - E_gravity) / distance
+    The battery-side elevation energy uses a symmetric 90% efficiency:
+    uphill demand is ``m*g*Δh/(3,600,000*eta)`` and downhill recovery is
+    ``eta*m*g*Δh/3,600,000`` (negative). The corrected EP is
+    ``(|delta_energy| - E_elevation,battery) / distance``.
     """
     if any(np.isnan(v) for v in (energy_kwh, distance_km, elevation_m, mass_kg)):
         return nan
     if distance_km <= 0:
         return nan
-    e_gravity_kwh = mass_kg * _G * elevation_m / 3_600_000.0
-    corrected = abs(energy_kwh) - e_gravity_kwh
+    e_elevation_battery_kwh = battery_elevation_energy_kwh(
+        elevation_m, mass_kg, ELEVATION_ENERGY_EFFICIENCY
+    )
+    corrected = abs(energy_kwh) - e_elevation_battery_kwh
     return round(corrected / distance_km, 4)
 
 
@@ -418,7 +426,9 @@ def _kinetics_corrected_energy_perf(
     # Elevation correction
     e_gravity_kwh = 0.0
     if not np.isnan(elevation_m):
-        e_gravity_kwh = mass_kg * _G * elevation_m / 3_600_000.0
+        e_gravity_kwh = battery_elevation_energy_kwh(
+            elevation_m, mass_kg, ELEVATION_ENERGY_EFFICIENCY
+        )
     # GPS speed preprocessing: clamp outliers + a 3-point median filter to suppress spikes
     v_kmh = np.asarray(speed_array_kmh, dtype=float)
     v_kmh = np.clip(v_kmh, 0.0, _V_MAX_KMH)
@@ -784,6 +794,20 @@ def _insert_stop_rows(
 # =============================================================================
 
 
+def _average_speed_kmh(distance_km: float, duration: pd.Timedelta) -> float:
+    """Return distance divided by the full segment duration in km/h.
+
+    The report column is a trip-average quantity and therefore includes stopped
+    time inside the segment window.  Using a duration inferred from sparse speed
+    samples can omit intervals in which the odometer increased and can produce
+    implausible values.
+    """
+    duration_hours = duration.total_seconds() / 3600.0
+    if not np.isfinite(distance_km) or distance_km <= 0 or duration_hours <= 0:
+        return nan
+    return round(distance_km / duration_hours, 2)
+
+
 def _seg_to_row(
     seg: dict,
     mode: str,
@@ -878,24 +902,10 @@ def _seg_to_row(
         if d > 0:
             distance = round(d, 3)
 
-    dur_h = duration.total_seconds() / 3600.0
     # ── Average Speed ────────────────────────────────────────────────────
-    # Default (first_motion anchor): distance / endpoint difference.
-    # In zero_speed anchor mode the endpoints have been extended out to zero-speed
-    # samples, so the trip window contains zero-speed tails → the denominator uses
-    # the cumulative duration of the trip's v > speed_threshold sub-intervals
-    # instead, preserving the physical meaning of speed. Written by
-    # find_discharge_segments_by_speed() in zero_speed mode as seg['motion_duration_s'];
-    # in first_motion mode / for charge segments this field is None or absent.
-    _motion_s = seg.get("motion_duration_s") if mode == "discharge" else None
-    if _motion_s is not None and _motion_s > 0 and not np.isnan(distance):
-        avg_speed = round(distance / (_motion_s / 3600.0), 2)
-    else:
-        avg_speed = (
-            round(distance / dur_h, 2)
-            if (not np.isnan(distance) and dur_h > 0)
-            else nan
-        )
+    avg_speed = _average_speed_kmh(distance, duration)
+
+    dur_h = duration.total_seconds() / 3600.0
 
     # ── Vehicle mass ──────────────────────────────────────────────────────
     veh_mass, veh_mass_cv = _get_vehicle_mass(df_leg, t_s, t_e, method=mass_agg)

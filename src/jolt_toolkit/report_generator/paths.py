@@ -29,6 +29,16 @@ def get_cache_dir() -> Path:
     return Path(os.environ.get("JOLT_CACHE_DIR") or _DEFAULT_CACHE_DIR)
 
 
+def default_report_root() -> str:
+    """Default report-database root: ``./excel_report_database/<DATA_NAMESPACE>``.
+
+    Reads the namespace at call time so overrides/monkeypatches are honoured.
+    """
+    from jolt_toolkit import DATA_NAMESPACE
+
+    return f"./excel_report_database/{DATA_NAMESPACE}"
+
+
 def get_srf_api_root() -> str:
     """Return the SRF API root URL.
 

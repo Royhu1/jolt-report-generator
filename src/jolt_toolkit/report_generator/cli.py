@@ -65,7 +65,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Output folder for the report. Defaults to "
-        "./excel_report_database/<package_version>.",
+        "./excel_report_database/<data_namespace>.",
     )
     return parser
 
@@ -110,13 +110,19 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Missing required argument(s): %s", ", ".join(missing))
         return 2
 
-    from jolt_toolkit import __version__
+    from jolt_toolkit import DATA_NAMESPACE, __version__
     from jolt_toolkit.report_generator._generator import JOLTReportGenerator
     from jolt_toolkit.report_generator.general_pipeline import VehicleNotFoundError
+    from jolt_toolkit.report_generator.paths import default_report_root
 
+    # Dual identity, always logged: the code revision and the data namespace it
+    # writes into are two independent facts. Logging the namespace only when it
+    # differs from __version__ would make the provenance vanish from the log the
+    # day a release happens to advance both together.
     logger.info("JOLT Report Generator v%s", __version__)
+    logger.info("Data namespace: %s", DATA_NAMESPACE)
 
-    out_dir = args.out_dir or f"./excel_report_database/{__version__}"
+    out_dir = args.out_dir or default_report_root()
     logger.info("Report output folder: %s", out_dir)
 
     # --raw-only and --debug are equivalent: both persist the raw artefacts and

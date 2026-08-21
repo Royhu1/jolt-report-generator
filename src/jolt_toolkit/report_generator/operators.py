@@ -169,7 +169,10 @@ def _resolve_operator_from_config(reg, leg, vehicles) -> str | None:
                 import pandas as pd
 
                 t = pd.Timestamp(val)
-                return t.tz_localize("UTC") if t.tzinfo is None else t
+                # Naive → localise as UTC; aware → convert, so a non-UTC
+                # offset in the config window cannot skew the comparison
+                # against the UTC-normalised leg start below.
+                return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
             except Exception:
                 return None
 

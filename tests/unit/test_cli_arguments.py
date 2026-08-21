@@ -153,13 +153,19 @@ def test_main_fast_mode_is_passed_through(captured_generator):
     assert factory.call_args.kwargs["fast_mode"] is True
 
 
-def test_main_out_dir_defaults_to_the_versioned_report_database(captured_generator):
-    from jolt_toolkit import __version__
+def test_main_out_dir_defaults_to_the_data_namespace(captured_generator):
+    """The default output root follows DATA_NAMESPACE, not the code version.
+
+    The two constants are deliberately independent: an output-identical release
+    bumps ``__version__`` while leaving the namespace pointing at the tree that
+    already holds the reports.
+    """
+    from jolt_toolkit import DATA_NAMESPACE
 
     factory, _ = captured_generator
     cli.main(BASE_ARGS)
     assert factory.call_args.kwargs["report_output_folder"] == (
-        f"./excel_report_database/{__version__}"
+        f"./excel_report_database/{DATA_NAMESPACE}"
     )
 
 

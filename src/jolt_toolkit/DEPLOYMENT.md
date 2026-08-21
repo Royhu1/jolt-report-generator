@@ -21,7 +21,7 @@ ledger in the config directory and the caches (both below).
   on the import path — `PYTHONPATH=<root>/src`, or a `.pth` file in the target env's
   `site-packages` holding the absolute path to `<root>/src`.
 - Smoke: `python -m jolt_toolkit.report_generator.cli --help` (rc 0) and
-  `python -c "import jolt_toolkit; print(jolt_toolkit.__version__)"`.
+  `python -c "import jolt_toolkit; print(jolt_toolkit.__version__, jolt_toolkit.DATA_NAMESPACE)"`.
 
 ## Entry points
 
@@ -42,7 +42,7 @@ path = gen.generate_report("KY24LHT", "2025-01-01", "2025-01-31")   # → str | 
 | `--fast` | skip the SRF Logger + Charger fetch (FPS telematics only) |
 | `--debug` | additionally persist raw artefacts (see output contract) |
 | `--raw-only` | exact alias of `--debug` |
-| `--out-dir` / `--report-output-folder` | output root; default `./excel_report_database/<version>` |
+| `--out-dir` / `--report-output-folder` | output root; default `./excel_report_database/<DATA_NAMESPACE>` |
 
 ## Environment
 

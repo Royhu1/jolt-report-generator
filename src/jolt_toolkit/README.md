@@ -3,7 +3,8 @@
 > Developer-facing architecture reference for the `jolt_toolkit` workspace — a
 > **vendored code workspace**, not an installable package: no wheel, no
 > `pip install`, no console script; runtime deps in
-> [`requirements.txt`](requirements.txt), version constant in `__init__.py`.
+> [`requirements.txt`](requirements.txt), code version and data-namespace constants in
+> `__init__.py`.
 > Project overview & repo-wide usage → [root README.md](../../README.md) |
 > deployment contract → [DEPLOYMENT.md](DEPLOYMENT.md) | version history →
 > [versions.md](versions.md).
@@ -42,8 +43,9 @@ OPENWEATHER_API_KEYS=key1,key2     # optional, only for the weather post-step
 python -m jolt_toolkit.report_generator.cli -veh KY24LHT -ds 2025-01-01 -de 2025-01-31 [--debug] [--fast] [--raw-only] [--out-dir DIR]
 ```
 
-The report lands at `<out-dir>/<REG>/jolt_report_<REG>_<start>_<end>.xlsx`
-(default `<out-dir>` = `./excel_report_database/<version>`).
+The report lands at `<out-dir>/<REG>/jolt_report_<REG>_<start>_<end>.xlsx`.
+The default `<out-dir>` is `./excel_report_database/<DATA_NAMESPACE>`; this may trail
+`__version__` after an output-identical release.
 
 | Flag | Meaning |
 |------|---------|
@@ -62,8 +64,8 @@ key and failing obscurely on the first request).
 
 ```python
 from jolt_toolkit.report_generator import JOLTReportGenerator, generate_report, patch_logger
-gen = JOLTReportGenerator(report_output_folder="./excel_report_database",
-                          debug_mode=True, fast_mode=False)  # save_figures is a no-op
+gen = JOLTReportGenerator(debug_mode=True,
+                          fast_mode=False)  # defaults to <DATA_NAMESPACE>; save_figures is a no-op
 gen.generate_report("AV24LXK", "2024-06-01", "2024-09-01")   # returns the xlsx path or None
 
 # shared analysis helpers (used by sub-projects; sub-project independence)
@@ -74,7 +76,7 @@ from jolt_toolkit.analysis import build_interp, delta, to_utc, ols, ols_hc1, vif
 
 ```
 src/jolt_toolkit/
-├── __init__.py                    # __version__ (plain constant, read from source)
+├── __init__.py                    # __version__ + DATA_NAMESPACE (read from source)
 ├── configs/                       # shared config (accessed via get_config_path(); JOLT_CONFIG_DIR override)
 │   ├── __init__.py                # get_config_path() — honours env JOLT_CONFIG_DIR, else the workspace configs/ dir
 │   ├── vehicles.json  pipelines.json  plot_config.json
@@ -88,6 +90,7 @@ src/jolt_toolkit/
 │   ├── operators.py               # derive_leg_operator() — per-leg operator code (SRF cascade)
 │   ├── diesel_pipeline.py         # process_diesel_leg() — SRFLOGGER_V1 Logger-only path (fuel_type=="DIESEL")
 │   ├── pedal_histogram.py         # accelerator/brake pedal position histograms
+│   ├── energy_correction.py       # battery_elevation_energy_kwh() — battery-side elevation energy at a symmetric efficiency
 │   ├── paths.py                   # get_cache_dir() / get_srf_api_root() — env-overridable roots
 │   ├── cli.py                     # module CLI entry point (python -m …report_generator.cli; argparse main())
 │   ├── xlsx_patch_common.py       # shared patcher scaffolding: make_srf_client + filename/cell/timestamp helpers
@@ -215,6 +218,7 @@ as a fallback.
 | `diesel_pipeline.py` | `process_diesel_leg()` — SRFLOGGER_V1 channels → diesel rows |
 | `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan` |
 | `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows` |
+| `energy_correction.py` | `battery_elevation_energy_kwh()` — battery-side energy of a net elevation change (`ELEVATION_ENERGY_EFFICIENCY = 0.90`); shared by `row_builder` and `capacity` so both corrected-EP paths agree |
 | `charts.py` | `CHART_SPECS_EV`/`CHART_SPECS_DIESEL` + `CHART_STYLE` (fixed-axis chart specs) |
 | `excel_writer.py` | `_write_na()` (=NA() contract), `_write_excel_report()` (report/graphs/definitions sheets) |
 | `report_builder.py` | facade re-exporting `columns`/`charts`/`row_builder`/`excel_writer` on the flat import path |
@@ -386,7 +390,12 @@ column and the externally-rendered validation figure.
 **Report worksheet** — one segment per row, columns = `HEADERS` (EV, 50) / `DIESEL_HEADERS`
 (diesel, 26). Green = discharge trip, red = charge, white = Stop. Timestamps
 `yyyy-mm-dd hh:mm:ss`; durations `[hh]:mm:ss` (fractional days); SRF links are clickable
-hyperlinks. Empty numeric cells are the `=NA()` formula written with an **empty cached
+hyperlinks. `Average Speed (km/h)` is odometer distance divided by the full elapsed
+segment duration, including stopped time within the segment window, for both EV and
+diesel reports. The two corrected-EP columns remove the **battery-side** energy of the
+net elevation change (`energy_correction.battery_elevation_energy_kwh`): uphill deducts
+`m·g·Δh / η`, downhill adds back `η·m·g·Δh`, at the symmetric `η = 0.90` also used by the
+kinetics correction. Empty numeric cells are the `=NA()` formula written with an **empty cached
 value** (`_write_na`): Excel recalculates them to `#N/A`, while non-recalculating readers
 (openpyxl `data_only=True`, `pandas.read_excel`) see a blank → NaN. Downstream readers
 must guard with a safe-number helper that tolerates both.

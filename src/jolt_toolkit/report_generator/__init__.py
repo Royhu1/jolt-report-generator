@@ -26,10 +26,10 @@ def generate_report(
     call sites — the package no longer paints validation figures or writes the
     inspect HTML; render them externally from the persisted raw data.
     """
-    from jolt_toolkit import __version__
+    from jolt_toolkit import DATA_NAMESPACE
 
     gen = JOLTReportGenerator(
-        report_output_folder=f"./{outputfolder}/{__version__}",
+        report_output_folder=f"./{outputfolder}/{DATA_NAMESPACE}",
         overwrite_existing_report=True,
         debug_mode=debug,
         fast_mode=(mode == "fast"),

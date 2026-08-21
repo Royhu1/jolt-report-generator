@@ -233,3 +233,139 @@
 - Known and deliberately not fixed: post-split discharge segments bypass the
   `cap_lo`/`cap_hi` plausibility guard (36 of 42,860 counter-sourced legs, 0.08 %, no
   effect on fleet statistics). Registered with its evidence as pending issue 007.
+
+## 3.3.0 — elapsed trip-average speed and battery-side elevation correction
+
+- **Trip-average speed** for every EV pipeline is now odometer distance divided by the
+  full elapsed segment duration, matching the diesel definition. The previous denominator
+  was a moving-duration estimate accumulated from sparse telematics samples, which
+  systematically overstated speed on legs where the sampling gaps swallowed stopped time.
+  Merged as `fix/elapsed-trip-average-speed` (commit `c18f1b4`). One residual family of
+  implausible values above 90 km/h survives this fix — stale odometer anchors across
+  telemetry gaps overstate the numerator, not the denominator — registered with its
+  evidence as pending issue 008.
+- **Elevation-corrected and kinetics-corrected EP** now deduct the *battery-side* energy
+  of the net elevation change instead of the raw potential energy. The new
+  `report_generator/energy_correction.py` exposes `battery_elevation_energy_kwh()`:
+  uphill demand is `m·g·Δh / η`, downhill recovery is `η·m·g·Δh` (negative), at a
+  symmetric `η = 0.90` — the same efficiency the kinetics correction already assumed for
+  the drivetrain and regenerative braking. Losses are therefore one-directional: the same
+  hill costs the battery more to climb than it repays on the descent. The helper is
+  applied consistently at every site that previously inlined `m·g·Δh / 3 600 000`:
+  `row_builder._corrected_energy_perf`, `row_builder._kinetics_corrected_energy_perf` and
+  the EP-rewrite path of `capacity._correct_effective_capacity`, so the generated report
+  and the capacity-correction pass can no longer disagree. `Δh = 0` and NaN elevation
+  behave exactly as before. A new Definitions-sheet line documents the formula, and
+  `tests/test_energy_correction.py` pins the efficiency semantics.
+- **Data namespace: new directory `excel_report_database/3.3.0/`**, populated from
+  `3.2.0/` with the SRF-free cached-recompute tool
+  (`.claude/skills/generate-excel-report/tools/recompute_from_cache.py`). Releases 3.2.0
+  and 3.2.1 share the `3.2.0/` directory, 3.2.1 being behaviour-preserving under the
+  exception in `.claude/rules/git-workflow.md` "Line 1"; this release changes reported
+  numbers, so it opens its own. The migration covered 17/17 vehicles: 14 EVs replayed
+  from cached raw telematics, and WU70GLV, YT21EFD (both diesel) plus YN25RSY (its
+  `prefer_logger_speed` pipeline needs Logger channels the cache does not hold) copied
+  forward verbatim with **0 differing cells**.
+- **YN25RSY needed no in-place patch after all.** The verbatim copy already satisfies both
+  of this release's changes: its published speeds were already distance ÷ elapsed time
+  (the logger-speed pipeline never used the moving-duration denominator), and its
+  corrected-EP columns are entirely `=NA()` for want of altitude and mass inputs, so the
+  elevation formula cannot move them. Verification did surface a **pre-existing**
+  inconsistency in this vehicle, inherited through the verbatim copy-forwards since 2.2.8:
+  its GraphsData holds 12 `(speed, EP)` pairs with no corresponding Report row. Registered
+  as pending issue 009; not introduced by this release and deliberately not fixed here.
+- **Verification — cell-by-cell against `3.2.0/`**, over every matched report file. All
+  differences fall inside the expected scope:
+  - `Average Speed` — Report column 14 (N), 31,368 cells; its GraphsData mirror (column E),
+    31,088 cells.
+  - `Energy Performance Corrected by Elevation Difference` — column 31, 26,661 cells;
+    `Energy Performance Kinetics Corrected` — column 47, 338 cells (the kinetics column is
+    only populated where Logger 1 Hz speed exists).
+  - The new Definitions-sheet line, which shifts 5 rows per file.
+  - GraphsData's EP-pair column (F) shows 2,031 positional shifts. A multiset check proves
+    these are **insertions only** — no EP value was lost or altered: 43 driving legs whose
+    former above-90 km/h speeds now fall back inside the chart's 0–90 km/h x-filter and so
+    re-enter the series.
+  - `Energy Output from Charger (kWh)` (column 33): the replay writes `=NA()` wherever a
+    historical backfill was never persisted into the `raw_charger` CSVs, and the
+    `charger_patcher` CLI cannot restore them because its idempotence gate is a non-empty
+    `Charger Link` cell. 165 such cells were restored by overlaying the published `3.2.0/`
+    values keyed by row `Start Time`; charger transactions are immutable, so this is
+    equivalent to a fresh SRF backfill. Tool: `tmp/_patch_charger_energy_330.py`.
+  - Weather columns 38–43: 18 cells across CMZ6260 / LN25NKE / YN75NMA moved from `=NA()`
+    to truly blank, because the start-time overlay skips NA sources. Both encode the same
+    missing-ness and `compare_reports.py` treats them as equal.
+- **Monitor slice consolidation.** The weekly slices `*_20260601_20260706` and
+  `*_20260707_20260818` were merged into `*_20260601_20260818` quarter files for eight
+  vehicles (AV24LXJ / AV24LXK / AV24LXL, EV73SAL, N88GNW, T88RNW, TA70WTL, YK73WFN). The
+  merged files inherited their weather and link columns through the per-vehicle start-time
+  overlay and were included in the charger-column restoration above.
+
+## 3.4.0 — machine-readable data namespace and UTC-normalisation fixes
+
+- **Data namespace: unchanged, still `3.3.0/`** — the release is behaviour-preserving, and
+  the cell-by-cell comparison against the 3.3.0 goldens confirms it. All nine YK73WFN
+  report files (2024-06 → 2026-08) were regenerated with the 3.4.0 code from the `3.3.0/`
+  raw artefacts into a scratch namespace and compared against the goldens: **no numeric
+  value produced by the 3.4.0 code differs**, and four of the nine files are
+  byte-identical. Only two classes of cell are flagged, neither of them a change in
+  computed output:
+  - 48 `Energy Output from Charger` cells that the cached replay leaves `=NA()` because
+    the underlying transactions are absent from the `raw_charger` CSVs. The per-file counts
+    (2 / 4 / 4 / 2 / 36) are exactly the set the 3.3.0 migration restored by start-time
+    overlay, so this is a standing property of the replay tool, not an effect of this
+    release; the canonical `3.3.0/` values are untouched.
+  - 6 weather cells differing only in the `=NA()` ↔ truly-blank encoding of the same
+    missing-ness, which `compare_reports.py` treats as equal.
+
+  The scratch namespace was deleted after the comparison. The **diesel** generation path is
+  untouched by this release — the `to_utc` conversions are instant-preserving and the
+  diesel pipeline carries its own timezone handling — and PR #1's own live smoke had
+  already shown 0 differing cells for WU70GLV on its base. Full suite: **281 passed, 2
+  skipped**; the skill-registry check is in sync.
+- **The active report-data tree is now a machine-readable constant**,
+  `jolt_toolkit.DATA_NAMESPACE`, instead of being inferred from `__version__`
+  (ADR-005). Its initial value is `3.3.0`, the populated canonical tree. Previously every
+  version-defaulted tool built its output path from `__version__`, so a release that
+  provably changed no cell — and therefore correctly reused the previous data directory
+  under the exception in `.claude/rules/git-workflow.md` "Line 1" — left every default
+  consumer one run away from creating and then filling an empty
+  `excel_report_database/<toolkit-version>/`. That is exactly the silent drift that
+  produced the v3.2.0 divergence, where `__version__` had advanced three releases past the
+  newest populated tree. The two facts are now stated separately and can differ on
+  purpose.
+- **Every default consumer resolves through the constant**: the `JOLTReportGenerator`
+  class default, the `report_generator.generate_report()` convenience wrapper, the module
+  CLI, the fleet data-collection monitor, the dashboard runner, the PDF briefing
+  generator, and the inspect-HTML refresh — plus three consumers that had also hard-coded
+  a version-derived literal: `data_analysis_workspace/shared/batch_weather_patch.py`,
+  `data_analysis_workspace/shared/generate_figures.py` and `chatbot/build_kb.py`.
+- **A new shared resolver, `report_generator.paths.default_report_root()`**, replaces five
+  hand-built `./excel_report_database/<…>` literals. It reads the namespace *at call time*,
+  so an override or a test monkeypatch is honoured; the generator's
+  `report_output_folder` parameter therefore defaults to `None` and resolves inside
+  `__init__` rather than freezing the path at import. The module CLI now logs the code
+  revision and the data namespace as two unconditional lines — the previous
+  log-only-when-they-differ behaviour would have erased the provenance from the log on the
+  first release that advanced both together.
+- **`_to_utc()` now converts an aware non-UTC timestamp to UTC** instead of returning it
+  unchanged, so a non-UTC offset can no longer leak into a comparison against a
+  UTC-indexed series. All **three** independent copies of the helper are fixed:
+  `segmentation/timeutil._to_utc` (the copy on the segmentation hot path),
+  `analysis/counters.to_utc` (counter-endpoint interpolation) and the inner `_ts` of
+  `report_generator/operators.py` (time-resolved operator windows). Naive timestamps are
+  still localised as UTC, and already-UTC timestamps and their instants are unchanged, so
+  no report cell moves. Regression coverage pins merged segment endpoints and their
+  private energy-anchor timestamps.
+- **Fleet monitor**: the status-output directory is created independently of the PDF step,
+  so `--dry-run --no-pdf` works in a fresh repository; the startup log reports the data
+  namespace and the toolkit version separately; and the conditional `jolt_toolkit` import
+  is restored, so an explicit `--version` keeps the read-only path runnable when the
+  package is not on the import path.
+- **The no-capacity fallback path no longer raises while formatting its INFO log** when
+  the global effective capacity is `None` — the missing value is logged as `nan`, and the
+  calculation result is unchanged.
+- **New regression tests**: NaN Excel hyperlink cells, cached-diesel GPS column
+  normalisation, pedal-histogram invalid input, the `_to_utc` conversions, and the
+  namespace defaults themselves (including a check that this file's newest section names
+  the active namespace, so the two can no longer drift apart unnoticed).

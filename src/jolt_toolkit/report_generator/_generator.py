@@ -59,7 +59,11 @@ from jolt_toolkit.report_generator.general_pipeline import (  # noqa: F401
     is_runtime_config,
 )
 from jolt_toolkit.report_generator.operators import derive_leg_operator
-from jolt_toolkit.report_generator.paths import get_cache_dir, get_srf_api_root
+from jolt_toolkit.report_generator.paths import (
+    default_report_root,
+    get_cache_dir,
+    get_srf_api_root,
+)
 from jolt_toolkit.report_generator.report_builder import (
     DIESEL_HEADERS,
     HEADERS,
@@ -165,13 +169,17 @@ class JOLTReportGenerator:
 
     def __init__(
         self,
-        report_output_folder: str = "./excel_report_database",
+        report_output_folder: str | None = None,
         overwrite_existing_report: bool = True,
         debug_mode: bool = False,
         fast_mode: bool = False,
         save_figures: bool = True,
     ) -> None:
         """
+        report_output_folder
+            Report-database root. ``None`` (the default) resolves to
+            ``./excel_report_database/<DATA_NAMESPACE>`` **at call time**, so a
+            namespace override is honoured instead of being frozen at import.
         save_figures
             **No-op**, retained only for backward-compatible call
             sites. The package no longer paints validation figures or writes the
@@ -187,7 +195,7 @@ class JOLTReportGenerator:
             cache_dir=str(get_cache_dir()),
             verify=True,
         )
-        self.report_output_folder = report_output_folder
+        self.report_output_folder = report_output_folder or default_report_root()
         self.overwrite_existing_report = overwrite_existing_report
         self.debug_mode = debug_mode
         self.fast_mode = fast_mode

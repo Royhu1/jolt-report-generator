@@ -10,4 +10,4 @@ import pandas as pd
 
 def _to_utc(ts) -> pd.Timestamp:
     t = pd.Timestamp(ts)
-    return t if t.tzinfo is not None else t.tz_localize("UTC")
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")

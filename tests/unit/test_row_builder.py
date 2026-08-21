@@ -267,11 +267,21 @@ def test_ep_exclude_aux_degrades_to_nan(prop, recup, dist):
     assert math.isnan(rb._ep_exclude_aux(prop, recup, dist))
 
 
-def test_corrected_energy_perf_removes_the_gravitational_term():
-    # E_grav = m*g*dh/3.6e6 = 30000*9.81*100/3_600_000 = 8.175 kWh
-    # corrected = (|-100| - 8.175) / 50 = 91.825 / 50 = 1.8365
+def test_corrected_energy_perf_removes_the_battery_side_elevation_energy():
+    # E_potential = m*g*dh/3.6e6 = 30000*9.81*100/3_600_000 = 8.175 kWh
+    # uphill draws it from the battery through the drivetrain: 8.175 / 0.90 = 9.0833
+    # corrected = (|-100| - 9.0833) / 50 = 90.9167 / 50 = 1.8183
     assert rb._corrected_energy_perf(-100.0, 50.0, 100.0, 30000.0) == pytest.approx(
-        1.8365, abs=5e-5
+        1.8183, abs=5e-5
+    )
+
+
+def test_corrected_energy_perf_downhill_adds_back_only_the_recovered_share():
+    # Downhill returns eta * E_potential = 0.90 * 8.175 = 7.3575 kWh
+    # corrected = (|-100| + 7.3575) / 50 = 107.3575 / 50 = 2.14715, which the
+    # column's 4-decimal rounding resolves downwards in binary floating point.
+    assert rb._corrected_energy_perf(-100.0, 50.0, -100.0, 30000.0) == pytest.approx(
+        2.14715, abs=1e-4
     )
 
 
@@ -279,6 +289,18 @@ def test_corrected_energy_perf_downhill_adds_the_recovered_potential():
     uphill = rb._corrected_energy_perf(-100.0, 50.0, 100.0, 30000.0)
     downhill = rb._corrected_energy_perf(-100.0, 50.0, -100.0, 30000.0)
     assert downhill > uphill
+
+
+def test_corrected_energy_perf_elevation_losses_are_one_directional():
+    """The same hill costs more to climb than it repays on the descent.
+
+    The uphill deduction is ``E/eta`` and the downhill credit only ``eta*E``, so
+    a there-and-back trip over the same net height is not energy neutral.
+    """
+    flat = rb._corrected_energy_perf(-100.0, 50.0, 0.0, 30000.0)
+    uphill = rb._corrected_energy_perf(-100.0, 50.0, 100.0, 30000.0)
+    downhill = rb._corrected_energy_perf(-100.0, 50.0, -100.0, 30000.0)
+    assert (flat - uphill) > (downhill - flat)
 
 
 def test_corrected_energy_perf_uses_the_documented_gravity_constant():

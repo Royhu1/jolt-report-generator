@@ -22,6 +22,10 @@ import logging
 import numpy as np
 import pandas as pd
 
+from jolt_toolkit.report_generator.energy_correction import (
+    ELEVATION_ENERGY_EFFICIENCY,
+    battery_elevation_energy_kwh,
+)
 from jolt_toolkit.report_generator.report_builder import HEADERS
 from jolt_toolkit.report_generator.segment_algorithms import VEHICLE_CONFIG
 
@@ -446,7 +450,7 @@ def _correct_effective_capacity(
             old_kin = row[idx_eperf_kin]
             if _cap_is_valid(old_corr) and _cap_is_valid(old_kin):
                 ke_per_d = old_corr - old_kin
-        e_grav = m * 9.81 * h / 3_600_000.0
+        e_grav = battery_elevation_energy_kwh(h, m, ELEVATION_ENERGY_EFFICIENCY)
         row[idx_eperf_corr] = round((abs(e) - e_grav) / d, 4)
         if ke_per_d is not None and idx_eperf_kin is not None:
             row[idx_eperf_kin] = round(row[idx_eperf_corr] - ke_per_d, 4)
@@ -613,7 +617,7 @@ def _correct_effective_capacity(
         n_fallback,
         len(charge_donors),
         len(discharge_donors),
-        avg_eff_cap,
+        float("nan") if avg_eff_cap is None else avg_eff_cap,
         cap_source,
     )
 

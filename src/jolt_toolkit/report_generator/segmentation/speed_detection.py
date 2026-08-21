@@ -277,12 +277,6 @@ def find_discharge_segments_by_speed(
             df[_c] = pd.to_numeric(df[_c], errors="coerce")
             df.loc[df[_c] == 0, _c] = np.nan
 
-    # Speed column (used to compute the cumulative v>0 sub-interval duration in zero_speed anchor mode)
-    if speed_col in df.columns:
-        df["_spd"] = pd.to_numeric(df[speed_col], errors="coerce").fillna(0.0)
-    else:
-        df["_spd"] = 0.0
-
     times_np = df[TIME_COL].values.astype("datetime64[ns]")
 
     # Total-energy baseline (used for the anchor relative values)
@@ -431,21 +425,6 @@ def find_discharge_segments_by_speed(
         else:
             lat_s = lon_s = lat_e = lon_e = None
 
-        # ── motion_duration_s (cumulative duration of v>0 sub-intervals, zero_speed anchor mode only)
-        # Written only when trip_endpoint_anchor='zero_speed'; downstream _seg_to_row
-        # uses this value instead of the endpoint difference as the avg_speed
-        # denominator, avoiding the zero-speed tails diluting the speed.
-        motion_duration_s = None
-        if trip_endpoint_anchor == "zero_speed":
-            win_idx = np.where(win_mask)[0]
-            if len(win_idx) >= 2:
-                spd_win = df["_spd"].values[win_idx]
-                tns_win = times_np[win_idx].view("i8")
-                # Forward difference: dt[i] = t[i+1] - t[i], counted if spd[i] > threshold
-                dt_ns = tns_win[1:] - tns_win[:-1]
-                moving_mask = spd_win[:-1] > speed_threshold_kmh
-                motion_duration_s = float(dt_ns[moving_mask].sum()) / 1e9
-
         segments.append(
             {
                 "start_time": trip_start,
@@ -465,7 +444,6 @@ def find_discharge_segments_by_speed(
                 "lon_start": lon_s,
                 "lat_end": lat_e,
                 "lon_end": lon_e,
-                "motion_duration_s": motion_duration_s,
                 "_anchor_start_time": anchor_s_time,
                 "_anchor_end_time": anchor_e_time,
                 "_anchor_start_rel_kwh": anchor_s_rel,

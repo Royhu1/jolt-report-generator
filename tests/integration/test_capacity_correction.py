@@ -216,7 +216,7 @@ def test_step1_recomputes_battery_power_and_the_corrected_ep():
     assert target[_IDX_EPERF_CORR] == pytest.approx(0.8)
 
 
-def test_step1_elevation_correction_uses_the_gravitational_term():
+def test_step1_elevation_correction_uses_the_battery_side_energy():
     donor = _charge_donor("2025-01-01T08:00:00Z", 400.0)
     target = _row(
         source="soc_estimate",
@@ -227,8 +227,13 @@ def test_step1_elevation_correction_uses_the_gravitational_term():
         mass=30000.0,
     )
     _correct([donor, target])
-    e_grav = 30000.0 * 9.81 * 200.0 / 3_600_000.0
-    assert target[_IDX_EPERF_CORR] == pytest.approx(round((80.0 - e_grav) / 100.0, 4))
+    # Battery-side uphill energy: m*g*dh / 3.6e6 / eta, eta = 0.90. The EP-rewrite
+    # path must use the same helper as row_builder, or the generated report and
+    # the capacity-correction pass would disagree on the same column.
+    e_elevation = 30000.0 * 9.81 * 200.0 / 3_600_000.0 / 0.90
+    assert target[_IDX_EPERF_CORR] == pytest.approx(
+        round((80.0 - e_elevation) / 100.0, 4)
+    )
 
 
 def test_step1_ignores_a_soc_estimate_row_without_a_soc_change():

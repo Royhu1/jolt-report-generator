@@ -25,8 +25,7 @@ from jolt_toolkit.report_generator.segmentation.mass_clustering import (
 )
 
 # Keys every segment of a kind must carry (the intersection over the fleet
-# fixtures; ``motion_duration_s`` is deliberately excluded because the
-# mass-cluster split re-creates segments without it).
+# fixtures).
 CHARGE_KEYS = {
     "start_time",
     "end_time",

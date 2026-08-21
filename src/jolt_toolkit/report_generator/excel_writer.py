@@ -421,6 +421,10 @@ def _write_definitions_sheet(workbook, headers: tuple) -> None:
             + '"soc_fallback" = discharge energy re-derived from SOC change × effective '
             + "capacity where the energy counter anchor was stale (outlier implied "
             + "capacity with a large, reliable SOC change).",
+            "Energy Performance Corrected by Elevation Difference (kWh/km): Energy performance "
+            + "with the battery-side energy of the net elevation change removed. Uphill deducts "
+            + "m·g·Δh / η, downhill adds back η·m·g·Δh, with η = 0.90 — the same symmetric "
+            + "efficiency as the kinetics correction.",
             "Energy Performance Kinetics Corrected (kWh/km): Elevation + per-second kinetic energy "
             + "corrected energy performance. Uses Logger 1Hz speed data to compute ΔKE per second, "
             + "with 90% regenerative braking efficiency (η_regen = 0.90). "
