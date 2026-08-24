@@ -409,7 +409,7 @@
     "crr": null,
     "cda": null,
     "make": "Renault",
-    "model": "Trucks D Wide Z.E.",
+    "model": "E-Tech T",
     "pipeline": "renault_speed",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
