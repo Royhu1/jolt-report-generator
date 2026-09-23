@@ -122,16 +122,35 @@ def _to_unix_utc(dt_val) -> int | None:
         return None
 
 
+# The EV header prefix that precedes the appended EP-confidence pair. Matching
+# on this prefix rather than on the whole of HEADERS is what keeps the backfill
+# working across a mixed report tree: a report written before the pair existed
+# stops at this column, so its cells beyond it read as None and an equality
+# test against the full HEADERS would classify it as "diesel/unknown" and patch
+# nothing. Derived from the column's position rather than written as a number,
+# so appending a further column keeps it right.
+_EV_HEADER_PREFIX = HEADERS[: HEADERS.index("EP Confidence")]
+
+
 def _is_ev_layout(ws) -> bool:
     """True iff the worksheet's header row matches the EV ``HEADERS`` layout.
 
     The ``_COL_*`` write indices assume the EV column order; a diesel report
     uses ``DIESEL_HEADERS`` (fewer columns, different order), so comparing the
-    header row against ``HEADERS`` before writing prevents silently patching the
-    wrong cells of a diesel / unknown workbook.
+    header row before writing prevents silently patching the wrong cells of a
+    diesel / unknown workbook.
+
+    The comparison is against :data:`_EV_HEADER_PREFIX`, not the whole of
+    ``HEADERS``: every column this patcher writes lives inside that prefix, so a
+    report written before the EP-confidence pair existed (which simply stops
+    there) is the same layout as far as this patcher is concerned, and both
+    widths are accepted. A
+    diesel workbook is still rejected — DIESEL_HEADERS diverges within the prefix
+    and runs out well before its end.
     """
-    header = [ws.cell(1, c).value for c in range(1, len(HEADERS) + 1)]
-    return header == list(HEADERS)
+    n = len(_EV_HEADER_PREFIX)
+    header = [ws.cell(1, c).value for c in range(1, n + 1)]
+    return header == list(_EV_HEADER_PREFIX)
 
 
 # ── API key management + weather cache ─────────────────────────────────────

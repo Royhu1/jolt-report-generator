@@ -69,7 +69,7 @@ dropped into your environment's `site-packages`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # ~45 s, ~950 tests, fully offline
+pytest                     # ~45 s, ~1040 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network and no writable state outside the temp directory:

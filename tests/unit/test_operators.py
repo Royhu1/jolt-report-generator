@@ -40,6 +40,12 @@ def _leg(description=None, trip_uri="trip://1", start_time=None):
         ("JOLT Round Robin: SJG-Scania", "SJG"),
         ("JOLT Round Robin: Port Express-Daimler", "PORT_EXPRESS_DAIMLER"),
         ("JOLT Round Robin: HTL-Volvo", "HTL"),
+        ("JOLT Round Robin: Coop-Scania", "COOP"),
+        ("JOLT Round Robin: Coop-Daimler", "COOP"),
+        # The regex backtracks over the hyphen, so the spelled-out form captures
+        # the whole "Co-op" token rather than stopping at "Co" — and must map to
+        # the same single code.
+        ("JOLT Round Robin: Co-op-Scania", "COOP"),
     ],
 )
 def test_round_robin_tokens_map_to_curated_codes(description, expected):
@@ -71,6 +77,8 @@ def test_uncurated_token_is_upper_snaked():
         "JOLT Nestle-Volvo",  # dedicated vehicle: not a round-robin description
         "JOLT Round Robin: JLP-Tesla",  # OEM outside the enumerated set
         "Round Robin: JLP-Volvo",  # missing the JOLT prefix
+        "JOLT comparator",  # a dedicated comparator vehicle's trial
+        "JOLT data from FPS",  # the generic dedicated-vehicle description
         123,
     ],
 )
@@ -93,6 +101,10 @@ def test_non_round_robin_descriptions_do_not_resolve(description):
         ("DP World", "DP_WORLD"),
         ("William Jackson Food", "WJF"),
         ("  william jackson food  ", "WJF"),
+        ("Co-op", "COOP"),
+        ("co-op", "COOP"),
+        ("  Co-Op  ", "COOP"),
+        ("Coop", "COOP"),
     ],
 )
 def test_normalize_srf_org_maps_dedicated_vehicles(org, expected):
@@ -126,6 +138,20 @@ def test_is_generic_srf_org(org, expected):
 def test_every_curated_mapping_target_is_a_known_code():
     for code in {**ops._TRIAL_OP_TO_CODE, **ops._SRF_ORG_TO_CODE}.values():
         assert code in ops.KNOWN_OPERATOR_CODES
+
+
+def test_coop_is_a_known_operator_code():
+    assert "COOP" in ops.KNOWN_OPERATOR_CODES
+
+
+def test_curated_coop_code_equals_the_uncurated_fallback_string():
+    # The curated code is exactly what ``_normalize_op_token`` already produced
+    # for the SRF spelling, so curating it can only silence the unknown-operator
+    # WARN — it cannot rewrite an existing Operator cell. The hyphenated
+    # spelling would fall back to a SECOND code for the same company, which is
+    # why "co-op" is mapped explicitly on both routes.
+    assert ops._normalize_op_token("Coop") == "COOP"
+    assert ops._normalize_op_token("Co-op") == "CO_OP"
 
 
 # ── derive_leg_operator cascade ──────────────────────────────────────────────
@@ -166,6 +192,22 @@ def test_cascade_step_4_undeterminable():
         _leg(None), "EVSPD01", srf_org_raw="JOLT Partners", vehicles={}
     )
     assert (code, source, unknown) == (None, "none", True)
+
+
+def test_cascade_resolves_a_coop_round_robin_leg_via_the_trial_route():
+    code, source, unknown = ops.derive_leg_operator(
+        _leg("JOLT Round Robin: Coop-Scania"), "EVSPD01"
+    )
+    assert (code, source, unknown) == ("COOP", "trial", False)
+
+
+def test_cascade_resolves_a_dedicated_coop_vehicle_via_the_org_route():
+    # A dedicated comparator: a non-round-robin trial description plus the
+    # company's own organisation name.
+    code, source, unknown = ops.derive_leg_operator(
+        _leg("JOLT comparator"), "EVSPD01", srf_org_raw="Co-op"
+    )
+    assert (code, source, unknown) == ("COOP", "srf_org", False)
 
 
 def test_cascade_flags_an_uncurated_code_as_unknown():

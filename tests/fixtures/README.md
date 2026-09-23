@@ -85,7 +85,7 @@ teardown.
 
 | File | What it pins |
 |------|--------------|
-| `segments_EVSPD01.json` | Every field of all 4 charge + 12 discharge segments from the speed branch, including the private `_anchor_*` fields. |
+| `segments_EVSPD01.json` | Every field of all 4 charge + 12 discharge segments from the speed branch, including the private `_anchor_*` fields and each discharge segment's `ep_audit` diagnostics. |
 | `segments_EVSOC01.json` | All 3 charge + 6 discharge segments from the SOC branch. |
 | `segments_EVMAD01.json` | All 3 charge + 10 discharge segments with `merge_by_mass: false`. |
 | `diesel_segments_DSL01.json` | The single diesel trip's full 20-key metrics dict. |
@@ -93,7 +93,9 @@ teardown.
 Each file records the `alias` and the `source` fixture path so a golden can never
 drift onto a different input. Timestamps are ISO strings that keep their offset
 (the naive/aware split is itself part of the behaviour), floats are rounded to 6
-decimal places and NaN is written as the string `"NaN"`.
+decimal places and NaN is written as the string `"NaN"`. A nested dict — the
+`ep_audit` key every EV discharge segment carries — is written field by field under
+the same rules, so each measured diagnostic is pinned individually.
 
 ### Regenerating
 

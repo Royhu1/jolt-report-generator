@@ -6,8 +6,11 @@ generation path (not invented):
   * diesel only:   ``weight_class_t`` (diesel_pipeline.process_diesel_leg)
 Every EV vehicle's ``pipeline`` must resolve in pipelines.json. Diesel vehicles
 carry ``pipeline: "daf_diesel_logger"`` — a dispatch marker (fuel_type==DIESEL +
-leg_source==SRFLOGGER_V1), deliberately NOT a pipelines.json entry — so they are
-excluded from the pipeline-resolution check.
+leg_source ``"SRFLOGGER_V1"``/``"SRFLOGGER_V2"``), deliberately NOT a
+pipelines.json entry — so they are excluded from the pipeline-resolution check.
+``leg_source`` itself is documentation: no code reads the key, and ``_collect_legs``
+matches any ``trip.source`` starting with ``SRFLOGGER``, so both versions are
+processed identically.
 """
 
 import json

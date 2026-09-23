@@ -14,6 +14,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from ..ep_confidence import attach_ep_audits
 from .constants import (
     AC_COL,
     DC_COL,
@@ -21,7 +22,9 @@ from .constants import (
     MIN_CLUSTER_GAP_KG,
     MOVING_COL,
     MOVING_SPEED_THRESHOLD_KMH,
+    ODO_COL,
     PIPELINE_CONFIGS,
+    SOC_COL,
     TIME_COL,
     TOTAL_ENERGY_COL,
     VEHICLE_CONFIG,
@@ -414,6 +417,44 @@ def run_segment_detection(
             reg,
             suffix,
         )
+
+    # ── EP-confidence diagnostics ──────────────────────────────────────────
+    # Measure (never modify) each final discharge segment's energy / distance
+    # attribution quality and attach it as the public ``ep_audit`` key, which the
+    # row builder turns into the 'EP Confidence' columns. Must run here: the
+    # quantities are measured against the counter anchors, which are only final
+    # after split / merge / _recompute_anchors / _enforce_anchor_ordering, and
+    # which are stripped from the segment dict before the row builder sees it.
+    #
+    # Wrapped because the diagnostics are a commentary on the report, not part of
+    # it: they read timestamps and counters straight off the raw frame, where an
+    # unparseable value would raise inside ``pd.Timestamp`` and take a whole
+    # vehicle's report generation with it — losing every measured number to lose
+    # a grade. On failure the partially-written audits are removed (half-measured
+    # diagnostics must not drive a grade) and the rows are graded on their own
+    # values, which is the documented "missing audit" path: audit-dependent checks
+    # are skipped, never failed.
+    try:
+        attach_ep_audits(
+            discharge_segs,
+            df_raw,
+            _tot_col,
+            _mov_col,
+            soc_col=SOC_COL,
+            odo_col=ODO_COL,
+            time_col=TIME_COL,
+        )
+    except Exception:
+        logger.warning(
+            "  EP-confidence diagnostics failed (%s %s); grading these %d segments "
+            "on row values alone",
+            reg,
+            suffix,
+            len(discharge_segs),
+            exc_info=True,
+        )
+        for _seg in discharge_segs:
+            _seg.pop("ep_audit", None)
 
     # ── Validation-figure seam ──────────────────────────────────────────────
     # The package no longer paints figures or imports matplotlib. When an external

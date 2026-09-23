@@ -151,10 +151,15 @@ dependencies include neither matplotlib nor scikit-learn.
 
 ## Known quirks — do NOT "fix" these silently
 
-- **Two header layouts.** EV uses `HEADERS` (50 columns), diesel `DIESEL_HEADERS` (26).
+- **Two header layouts.** EV uses `HEADERS` (52 columns), diesel `DIESEL_HEADERS` (26).
   Diesel is a distinct set — no SOC/battery/charging columns, carries `Fuel Used (L)` /
-  `Fuel Consumption (L/100km)` — not a truncation of EV. `Operator` is last in both. Do
-  not unify them.
+  `Fuel Consumption (L/100km)` — not a truncation of EV. `Operator` is the last column
+  both share; EV appends the `EP Confidence` / `EP Confidence Reason` pair after it, and
+  diesel is not graded. Do not unify them.
+- **Blank, not `=NA()`, where there is nothing to grade.** The two EP-confidence cells of
+  a charge row, a Stop row or a trip without an EP value are left truly empty: nothing is
+  missing there, there is simply no grade. An EV report written before the pair existed
+  stops at `Operator`; the coarse weather patcher accepts both widths.
 - **Append-only column contract.** The patchers address **hardcoded 1-based column
   indices** (temperature = EV column 38). New columns go at the end, never inserted.
   Import-time assertions (`_COL_* == HEADERS.index(<name>) + 1`) and

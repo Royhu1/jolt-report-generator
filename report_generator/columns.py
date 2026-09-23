@@ -99,6 +99,21 @@ HEADERS = (
     # (LoggerPatcher / WeatherPatcher's hard-coded indices and _generator's
     # _IDX_* are all ≤ 48 and unaffected).
     "Operator",
+    # Per-row confidence grade for the reported Energy Performance —
+    # 'good' / 'caution' / 'poor' — and the check codes behind it. Blank on any
+    # row with no EP value (charge / Stop rows, and trips with no usable
+    # distance): grading a number that was never reported would be misleading.
+    # The grading rules, their thresholds and the mechanisms they detect are in
+    # report_generator/ep_confidence.py; the diagnostics they read are measured
+    # in the segmentation layer (``attach_ep_audits``), because the counter
+    # anchors they need do not survive into the row tuple.
+    # Appended at the **end** of HEADERS, moving no existing column index (every
+    # hard-coded patcher column and every _generator _IDX_* is ≤ 49). Diesel goes
+    # through DIESEL_HEADERS and does not carry these columns: its energy comes
+    # from the LFC fuel counter, whose failure modes (counter resets, coarse
+    # quantisation) are different ones and are not yet modelled here.
+    "EP Confidence",
+    "EP Confidence Reason",
 )
 
 # ── Diesel-only column headers (a distinct set, not the EV HEADERS) ──

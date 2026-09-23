@@ -185,12 +185,10 @@ def test_compute_pedal_histogram_sample_gate_applies_after_dropna():
     assert ph.compute_pedal_histogram(pd.Series(values, index=idx)) is None
 
 
-@pytest.mark.parametrize("bad", [None, "not a frame"])
+@pytest.mark.parametrize("bad", [None, "not a frame", 42])
 def test_compute_pedal_histogram_rejects_unusable_input(bad):
-    # Note: a SIZELESS object (e.g. an int) raises TypeError from the len() gate
-    # rather than returning None. Both call sites in ``_seg_to_row`` wrap the
-    # call in try/except, so that path is unreachable in production; it is not
-    # asserted here so the suite does not pin an accident.
+    # 42 is a SIZE-LESS input: ``len()`` raises TypeError on it, which the sample
+    # gate catches and turns into "no histogram" rather than an exception.
     assert ph.compute_pedal_histogram(bad) is None
 
 

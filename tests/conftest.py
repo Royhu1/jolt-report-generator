@@ -188,6 +188,11 @@ def _jsonable(value):
         # Keep the offset when the timestamp is tz-aware: the naive/aware split
         # is itself part of the behaviour a golden file should pin.
         return value.isoformat()
+    if isinstance(value, dict):
+        # A nested diagnostics dict (the discharge segments' public ``ep_audit``
+        # key) is serialised field by field under the same rules, keys sorted, so
+        # a golden pins every measured value rather than one opaque repr string.
+        return {str(key): _jsonable(value[key]) for key in sorted(value)}
     if isinstance(value, float):
         # NaN has no JSON spelling; a sentinel keeps the diff readable.
         return "NaN" if value != value else round(value, 6)

@@ -129,6 +129,10 @@ def _write_report_sheet(workbook, ws, rows: list[tuple], headers: tuple) -> None
             "Histogram of Decelerator Pedal Position",
         ):
             ws.set_column(ci, ci, len(h) + 4)
+        elif h == "EP Confidence Reason":
+            # Holds several "CODE=value" findings; wide enough to read the codes
+            # without expanding the column by hand.
+            ws.set_column(ci, ci, 46)
         else:
             ws.set_column(ci, ci, max(len(h) + 2, 12))
 
@@ -435,6 +439,33 @@ def _write_definitions_sheet(workbook, headers: tuple) -> None:
             + "delta_energy_kwh / (delta_soc / 100). Not the nominal manufacturer value.",
             "Energy Performance (kWh/km): |delta_energy_kwh| / distance for discharge trips "
             + "with distance > 0. Only meaningful for discharge segments.",
+            'EP Confidence: how much the row\'s Energy Performance can be trusted. "good" = no '
+            + 'known problem; "caution" = usable but exclude from strict analyses; "poor" = do '
+            + "not use. Blank on charge and Stop rows, and on trips with no EP value — there is "
+            + "nothing to grade. The grade is the WORST of the checks below, not an average: one "
+            + "decisive defect is not offset by the others passing. It measures resolution and "
+            + "internal consistency, NOT provenance — Energy Source already records provenance, "
+            + "so a well-resolved SOC-derived energy can still be good.",
+            "EP Confidence Reason: the checks that fired, worst first, each with the value that "
+            + "was measured. Energy checks — DUP_ENERGY = reported energy / energy the counter "
+            + "actually measured over the same anchor span (above 1 means adjacent segments shared "
+            + "one sparse counter interval and merging them summed it twice). SPLIT_ALLOC = the "
+            + "same ratio below 1: the energy is a modelled share of a counter interval, not a "
+            + "measurement. CAP_INCONS = relative gap between the counter energy and SOC change × "
+            + "effective capacity — two independent routes to the same energy disagreeing.",
+            "EP Confidence Reason, continued. Attribution-window checks — ENERGY_WINDOW / "
+            + "DIST_WINDOW = the fraction of the trip's own distance that the vehicle covered "
+            + "outside the trip window but inside the counter's attribution window. DIST_EXTRAP = "
+            + "no odometer sample inside the trip window at all, so the distance is extrapolated "
+            + "from readings outside it. SOC resolution — SOC_RES = one SOC quantisation step as a "
+            + "fraction of the trip's SOC change, i.e. energy derived from a small SOC change on a "
+            + "coarse channel.",
+            "EP Confidence Reason, continued. Scale and plausibility checks — SHORT_DIST = trip "
+            + "distance (km), below the floor where EP still describes traction energy rather than "
+            + "auxiliary load and anchoring error. SPEED = elapsed average speed (km/h) above what "
+            + "the vehicle can physically sustain, so the distance or the window is wrong. "
+            + "EP_RANGE = the EP value itself, outside the plausible band for a 40 t battery "
+            + "HGV — the backstop for a cause not modelled by the checks above.",
         ]
     for dr, dt in enumerate(def_texts):
         defs_ws.write(dr, 0, dt, def_fmt)

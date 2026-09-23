@@ -84,7 +84,7 @@ def test_headers_first_column_is_leg_number():
 
 
 def test_header_lengths():
-    assert len(HEADERS) == 50
+    assert len(HEADERS) == 52
     assert len(DIESEL_HEADERS) == 26
 
 
@@ -95,17 +95,33 @@ def test_ev_diesel_temperature_column_diverges():
     assert DIESEL_HEADERS.index(name) + 1 == 19
 
 
-def test_operator_is_last_column_in_both():
-    assert HEADERS[-1] == "Operator"
+def test_operator_is_the_last_shared_column():
+    # The EP-confidence pair was appended after Operator on the EV side only
+    # (diesel energy comes from the LFC fuel counter and is not graded), so
+    # Operator is the last column diesel has and the last EV column before the
+    # confidence pair. Appending, never inserting, is what keeps every patcher's
+    # hard-coded column index valid.
     assert DIESEL_HEADERS[-1] == "Operator"
+    assert HEADERS[HEADERS.index("Operator") + 1] == "EP Confidence"
 
 
 def test_ev_trailing_columns():
-    assert tuple(HEADERS[-3:]) == (
+    assert tuple(HEADERS[-5:]) == (
         "Propulsion Energy (kWh)",
         "EP_exclude_aux",
         "Operator",
+        "EP Confidence",
+        "EP Confidence Reason",
     )
+
+
+def test_ep_confidence_is_ev_only():
+    # Diesel fuel consumption has its own failure modes (LFC counter resets,
+    # coarse quantisation) which these rules do not model, so the grade must not
+    # leak into the diesel column set and imply it was assessed.
+    for col in ("EP Confidence", "EP Confidence Reason"):
+        assert col in HEADERS
+        assert col not in DIESEL_HEADERS
 
 
 def test_diesel_trailing_columns():

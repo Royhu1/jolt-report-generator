@@ -11,12 +11,14 @@ at import.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import report_generator
 from report_generator import DATA_NAMESPACE, __version__, cli, paths
 from report_generator._generator import JOLTReportGenerator
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+VERSIONS_MD = Path(__file__).resolve().parents[2] / "doc" / "versions.md"
 
 
 class _FakeGenerator:
@@ -36,6 +38,21 @@ def test_both_constants_are_semver_and_the_namespace_never_leads():
     version_parts = tuple(int(part) for part in __version__.split("."))
     namespace_parts = tuple(int(part) for part in DATA_NAMESPACE.split("."))
     assert namespace_parts <= version_parts
+
+
+def test_the_newest_version_history_section_names_the_active_namespace():
+    """``doc/versions.md`` and ``version.py`` cannot drift apart unnoticed.
+
+    Every release appends a section in the same change as the bump, and that
+    section states which data namespace the release writes into — so the newest
+    section must open with ``__version__`` and name ``DATA_NAMESPACE``.
+    """
+    history = VERSIONS_MD.read_text(encoding="utf-8")
+    latest_section = history.rsplit("\n## ", maxsplit=1)[-1]
+
+    assert latest_section.startswith(f"{__version__} ")
+    assert "Data namespace:" in latest_section
+    assert f"`{DATA_NAMESPACE}/`" in latest_section
 
 
 def test_default_report_root_is_read_at_call_time(monkeypatch):

@@ -9,6 +9,8 @@
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2024 Volvo electric (265 kWh)",
+    "vin": "YV2XB40A4RA341763",
     "pipeline": "volvo_speed_00",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -59,6 +61,18 @@
       "20260625_20260706": {
         "kwh": 302.9,
         "n": 19
+      },
+      "20260707_20260818": {
+        "kwh": 299.4,
+        "n": 69
+      },
+      "20260819_20260902": {
+        "kwh": 297.5,
+        "n": 24
+      },
+      "20260903_20260920": {
+        "kwh": 291.8,
+        "n": 31
       }
     }
   },
@@ -66,12 +80,14 @@
     "srf_reg": "AV24 LXK",
     "nominal_kwh": 360,
     "srf_capacity_kwh": 265,
-    "effective_capacity_kwh": 308.0,
+    "effective_capacity_kwh": 306.4,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2024 Volvo electric (265 kWh)",
+    "vin": "YV2XB40A3RA341804",
     "pipeline": "volvo_speed_00",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -122,6 +138,18 @@
       "20260625_20260706": {
         "kwh": 286.4,
         "n": 19
+      },
+      "20260707_20260818": {
+        "kwh": 287.3,
+        "n": 77
+      },
+      "20260819_20260902": {
+        "kwh": 280.4,
+        "n": 12
+      },
+      "20260903_20260920": {
+        "kwh": 278.8,
+        "n": 19
       }
     }
   },
@@ -129,12 +157,14 @@
     "srf_reg": "AV24 LXL",
     "nominal_kwh": 360,
     "srf_capacity_kwh": 265,
-    "effective_capacity_kwh": 321.3,
+    "effective_capacity_kwh": 318.0,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2024 Volvo electric (265 kWh)",
+    "vin": "YV2XB40A3RA344167",
     "pipeline": "volvo_speed_00",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -185,6 +215,18 @@
       "20260625_20260706": {
         "kwh": 292.5,
         "n": 14
+      },
+      "20260707_20260818": {
+        "kwh": 290.6,
+        "n": 89
+      },
+      "20260819_20260902": {
+        "kwh": 284.8,
+        "n": 25
+      },
+      "20260903_20260920": {
+        "kwh": 283.8,
+        "n": 31
       }
     }
   },
@@ -192,13 +234,15 @@
     "srf_reg": "EV73 SAL",
     "nominal_kwh": 540,
     "srf_capacity_kwh": 378,
-    "effective_capacity_kwh": 368.1,
+    "effective_capacity_kwh": 366.4,
     "soc_energy_fallback": true,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2023 Volvo electric (378 kWh)",
+    "vin": "YV2XB40A3PB445264",
     "pipeline": "volvo_speed_01",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -249,6 +293,18 @@
       "20260625_20260706": {
         "kwh": 359.5,
         "n": 11
+      },
+      "20260707_20260818": {
+        "kwh": 353.0,
+        "n": 51
+      },
+      "20260819_20260902": {
+        "kwh": 353.8,
+        "n": 27
+      },
+      "20260903_20260920": {
+        "kwh": 351.6,
+        "n": 26
       }
     }
   },
@@ -256,13 +312,15 @@
     "srf_reg": "YK73 WFN",
     "nominal_kwh": 540,
     "srf_capacity_kwh": 378,
-    "effective_capacity_kwh": 360.6,
+    "effective_capacity_kwh": 359.7,
     "soc_energy_fallback": true,
     "max_torque_nm": 2400,
     "crr": null,
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2023 Volvo electric (378 kWh)",
+    "vin": "YV2XB40A5PB445704",
     "pipeline": "volvo_speed_02",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -313,6 +371,18 @@
       "20260625_20260706": {
         "kwh": 354.9,
         "n": 22
+      },
+      "20260707_20260818": {
+        "kwh": 348.9,
+        "n": 38
+      },
+      "20260819_20260902": {
+        "kwh": 350.4,
+        "n": 21
+      },
+      "20260903_20260920": {
+        "kwh": 353.2,
+        "n": 21
       }
     }
   },
@@ -327,6 +397,8 @@
     "cda": null,
     "make": "Volvo",
     "model": "FH Electric",
+    "description": "2024 Volvo artic",
+    "vin": "YV2RB40A7RA343872",
     "pipeline": "volvo_speed_04",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -371,6 +443,8 @@
     "cda": null,
     "make": "Volvo",
     "model": "FM Electric",
+    "description": "2024 Volvo electric (540 kWh)",
+    "vin": "YV2XB40A5RB461680",
     "pipeline": "volvo_speed_03",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -403,13 +477,15 @@
     "srf_reg": "N88 GNW",
     "nominal_kwh": 540,
     "srf_capacity_kwh": 417,
-    "effective_capacity_kwh": 381.5,
+    "effective_capacity_kwh": 378.9,
     "soc_energy_fallback": true,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Renault",
     "model": "E-Tech T",
+    "description": "2024 Renault electric (417 kWh)",
+    "vin": "VF611AEA3SD000216",
     "pipeline": "renault_speed",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -456,6 +532,18 @@
       "20260625_20260706": {
         "kwh": 370.7,
         "n": 6
+      },
+      "20260707_20260818": {
+        "kwh": 367.8,
+        "n": 18
+      },
+      "20260819_20260902": {
+        "kwh": 358.6,
+        "n": 5
+      },
+      "20260903_20260920": {
+        "kwh": 351.7,
+        "n": 30
       }
     }
   },
@@ -468,7 +556,9 @@
     "crr": null,
     "cda": null,
     "make": "Scania",
-    "model": "P-series BEV",
+    "model": "G230",
+    "description": "2025 Scania artic",
+    "vin": "YS2G4X20002203560",
     "pipeline": "scania_speed_00",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -507,7 +597,9 @@
     "crr": null,
     "cda": null,
     "make": "Scania",
-    "model": "P-series BEV",
+    "model": "P230",
+    "description": "2025 Scania 4x2",
+    "vin": "YS2P4X20002203685",
     "pipeline": "scania_speed_01",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -542,6 +634,8 @@
     "cda": null,
     "make": "Mercedes-Benz",
     "model": "eActros 600",
+    "description": "2025 Mercedes-Benz artic",
+    "vin": "W1T98340320822324",
     "pipeline": "mercedes_speed",
     "prefer_logger_speed": true,
     "speed_col": "speed",
@@ -554,13 +648,15 @@
     "srf_reg": "TA70 WTL",
     "nominal_kwh": 417,
     "srf_capacity_kwh": 417,
-    "effective_capacity_kwh": 381.8,
+    "effective_capacity_kwh": 379.4,
     "soc_energy_fallback": true,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Renault",
     "model": "E-Tech T",
+    "description": "2025 Renault Trucks artic",
+    "vin": "VF611AEA4SD000273",
     "pipeline": "renault_speed",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -601,6 +697,18 @@
       "20260625_20260706": {
         "kwh": 364.7,
         "n": 8
+      },
+      "20260707_20260818": {
+        "kwh": 352.8,
+        "n": 18
+      },
+      "20260819_20260902": {
+        "kwh": 379.4,
+        "n": 4
+      },
+      "20260903_20260920": {
+        "kwh": 359.3,
+        "n": 8
       }
     }
   },
@@ -608,13 +716,15 @@
     "srf_reg": "T88 RNW",
     "nominal_kwh": 211,
     "srf_capacity_kwh": 211,
-    "effective_capacity_kwh": 214.6,
+    "effective_capacity_kwh": 214.3,
     "soc_energy_fallback": true,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Renault",
     "model": "E-Tech D Wide",
+    "description": "2023 Renault E-Tech D Wide 19-t rigid electric (211 kWh)",
+    "vin": "VF620JEA7PB000178",
     "pipeline": "renault_speed",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -664,6 +774,14 @@
       "20260625_20260706": {
         "kwh": 216.4,
         "n": 7
+      },
+      "20260707_20260818": {
+        "kwh": 208.6,
+        "n": 21
+      },
+      "20260819_20260902": {
+        "kwh": 205.0,
+        "n": 6
       }
     }
   },
@@ -671,6 +789,8 @@
     "srf_reg": "WU70 GLV",
     "make": "DAF",
     "model": "XF 450",
+    "description": null,
+    "vin": "XLRTEM4100G331175",
     "fuel_type": "DIESEL",
     "pipeline": "daf_diesel_logger",
     "leg_source": "SRFLOGGER_V1",
@@ -694,6 +814,8 @@
     "srf_reg": "YT21 EFD",
     "make": "Scania",
     "model": "P410",
+    "description": "2021 Scania artic (12.7L)",
+    "vin": "YS2P4X20005617908",
     "fuel_type": "DIESEL",
     "pipeline": "daf_diesel_logger",
     "leg_source": "SRFLOGGER_V1",
@@ -717,12 +839,14 @@
     "srf_reg": "YN75 NMA",
     "nominal_kwh": 600,
     "srf_capacity_kwh": 600,
-    "effective_capacity_kwh": 510,
+    "effective_capacity_kwh": 600,
     "max_torque_nm": null,
     "crr": null,
     "cda": null,
     "make": "Mercedes-Benz",
     "model": "eActros 600",
+    "description": "2025 Mercedes-Benz artic",
+    "vin": null,
     "pipeline": "mercedes_soc",
     "speed_col": "wheel_based_speed",
     "ac_col": "battery_pack_ac_watthours",
@@ -742,7 +866,9 @@
     "crr": null,
     "cda": null,
     "make": "DAF",
-    "model": "XD Electric",
+    "model": "XD",
+    "description": null,
+    "vin": null,
     "pipeline": "daf_speed_00",
     "speed_col": "speed",
     "total_energy_col": "total_electric_energy_used",
@@ -751,5 +877,62 @@
     "min_cluster_gap_kg": 2000.0,
     "split_long_stops_min": 45,
     "merge_by_mass": false
+  },
+  "MK15BEV": {
+    "srf_reg": "MK15 BEV",
+    "nominal_kwh": 624,
+    "srf_capacity_kwh": null,
+    "effective_capacity_kwh": 417.4,
+    "max_torque_nm": null,
+    "crr": null,
+    "cda": null,
+    "make": "Scania",
+    "model": "R400E",
+    "description": "2024 Scania artic",
+    "vin": null,
+    "pipeline": "scania_speed_02",
+    "speed_col": "wheel_based_speed",
+    "ac_col": "battery_pack_ac_watthours",
+    "dc_col": "battery_pack_dc_watthours",
+    "total_energy_col": "total_electric_energy_used_plugged_in_included",
+    "moving_energy_col": "electric_energy_wheelbased_speed_over_zero",
+    "mass_col": "gross_combination_vehicle_weight_UNRELIABLE_use_logger_cvw",
+    "altitude_col": "gnss_altitude",
+    "min_cluster_gap_kg": 2000.0,
+    "effective_capacity_quarterly": {
+      "20260721_20260831": {
+        "kwh": 420.2,
+        "n": 86
+      },
+      "20260901_20260921": {
+        "kwh": 409.5,
+        "n": 31
+      }
+    }
+  },
+  "NK74YTA": {
+    "srf_reg": "NK74 YTA",
+    "make": "Scania",
+    "model": null,
+    "description": "2024 Scania artic (9.3L)",
+    "vin": "YS2P4X20005752597",
+    "fuel_type": "DIESEL",
+    "pipeline": "daf_diesel_logger",
+    "leg_source": "SRFLOGGER_V2",
+    "weight_class_t": 38.0,
+    "diesel_lhv_kwh_per_l": 10.0,
+    "speed_col": "CCVS wheel based vehicle speed",
+    "speed_col_fallback": "2 speed",
+    "fuel_energy_col": "LFC engine total fuel used",
+    "fuel_rate_col": "LFE fuel rate",
+    "distance_col": "VDHR hr total vehicle distance",
+    "mass_col": "CVW gross combination vehicle weight",
+    "altitude_col": "2 altitude",
+    "ambient_temp_col": "AMB ambient air temperature",
+    "min_cluster_gap_kg": 2000.0,
+    "min_trip_duration_min": 2.0,
+    "min_trip_distance_km": 1.0,
+    "min_stop_duration_min": 5.0,
+    "speed_threshold_kmh": 1.0
   }
 }

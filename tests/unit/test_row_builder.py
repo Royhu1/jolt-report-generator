@@ -475,6 +475,61 @@ def test_get_vehicle_mass_without_a_speed_column_uses_all_positive_samples():
     assert mass == 25000.0
 
 
+# The vehicle's configured ``cfg["mass_col"]``. Pointing it at a name the feed does
+# not carry is the supported way to reject a mislabelled GCVW signal (one that
+# reports the tractor rather than the combination weight).
+_ALT_MASS_COL = "gross_combination_vehicle_weight_UNRELIABLE_use_logger_cvw"
+
+
+def _moving_frame(**columns):
+    """Five one-minute samples inside [T0, T1], all moving unless overridden."""
+    times = pd.date_range("2025-06-27T08:00:00Z", periods=5, freq="1min")
+    data = {TIME_COL: times.astype(str), "wheel_based_speed": [60.0] * 5}
+    data.update(columns)
+    return pd.DataFrame(data)
+
+
+def test_get_vehicle_mass_reads_the_configured_mass_column():
+    df = _moving_frame(**{_ALT_MASS_COL: [25000.0] * 5})
+    mass, cv = rb._get_vehicle_mass(df, T0, T1, mass_col=_ALT_MASS_COL)
+    assert mass == 25000.0
+    assert cv == 0.0
+
+
+def test_get_vehicle_mass_ignores_the_default_column_when_another_is_configured():
+    # The rejected default must not leak back in: with nothing under the
+    # configured name the cell stays empty (NaN), for LoggerPatcher to fill
+    # from the Logger CVW, instead of carrying the tractor-weight signal.
+    df = _moving_frame(**{"gross_combination_vehicle_weight": [7700.0] * 5})
+    mass, cv = rb._get_vehicle_mass(df, T0, T1, mass_col=_ALT_MASS_COL)
+    assert math.isnan(mass) and math.isnan(cv)
+
+
+def test_get_vehicle_mass_default_column_path_is_the_explicit_one():
+    df = _moving_frame(
+        gross_combination_vehicle_weight=[40000.0, 40000.0, 42000.0, 42000.0, 41000.0]
+    )
+    explicit = rb._get_vehicle_mass(
+        df, T0, T1, mass_col="gross_combination_vehicle_weight"
+    )
+    implicit = rb._get_vehicle_mass(df, T0, T1)
+    assert explicit == implicit
+    # mean of the five moving samples = 205000 / 5
+    assert implicit[0] == 41000.0
+
+
+def test_get_vehicle_mass_configured_column_keeps_the_moving_sample_filter():
+    # The two stationary samples carry the unreliable broadcast and are dropped.
+    df = _moving_frame(
+        **{
+            _ALT_MASS_COL: [10000.0, 10000.0, 30000.0, 30000.0, 30000.0],
+            "wheel_based_speed": [0.0, 0.0, 60.0, 60.0, 60.0],
+        }
+    )
+    mass, _ = rb._get_vehicle_mass(df, T0, T1, mass_col=_ALT_MASS_COL)
+    assert mass == 30000.0
+
+
 # ── Recuperation ─────────────────────────────────────────────────────────────
 
 
@@ -689,6 +744,15 @@ def test_stop_row_core_fields():
     for link in ("Telematics Link", "Charger Link", "SRF Logger Link"):
         assert get(link) is None
     assert get("Operator") == "WJF"
+
+
+def test_stop_row_ep_confidence_is_blank_not_na():
+    # A Stop states no EP, so there is nothing to grade. None (not the NaN the
+    # rest of the row defaults to) makes the writer leave the cell empty instead
+    # of writing =NA(): nothing is missing, there is simply no grade.
+    stop = rb._stop_row_from_neighbours(_ev_row(**PREV), _ev_row(**NEXT))
+    assert stop[_row_col_index("EP Confidence")] is None
+    assert stop[_row_col_index("EP Confidence Reason")] is None
 
 
 def test_stop_row_falls_back_to_the_next_rows_origin():
