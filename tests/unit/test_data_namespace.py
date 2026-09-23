@@ -55,6 +55,24 @@ def test_the_newest_version_history_section_names_the_active_namespace():
     assert f"`{DATA_NAMESPACE}/`" in latest_section
 
 
+def test_the_version_history_is_append_forward():
+    """Every release heading is SemVer, in ascending order, newest last, none twice.
+
+    Together with the test above this is the release discipline: bumping
+    ``report_generator/version.py`` without appending its section — or appending
+    it anywhere but at the bottom — fails the suite.
+    """
+    from report_generator import version
+
+    history = VERSIONS_MD.read_text(encoding="utf-8")
+    headings = re.findall(r"^## (\S+) ", history, flags=re.MULTILINE)
+    assert headings, "doc/versions.md has no release sections"
+    assert all(SEMVER_RE.fullmatch(h) for h in headings), headings
+    releases = [tuple(int(part) for part in h.split(".")) for h in headings]
+    assert releases == sorted(set(releases))
+    assert headings[-1] == version.__version__ == __version__
+
+
 def test_default_report_root_is_read_at_call_time(monkeypatch):
     assert paths.default_report_root() == f"./excel_report_database/{DATA_NAMESPACE}"
     monkeypatch.setattr("report_generator.DATA_NAMESPACE", "9.9.9")
