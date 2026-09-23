@@ -66,9 +66,11 @@ a key is logged.
 The package loads the vehicle configs (and fixes the postcode-cache path) when it is
 first imported, which for `python -m report_generator.cli` is before `.env` is read.
 Export `JOLT_CONFIG_DIR` and `JOLT_CACHE_DIR` in the process environment rather than
-relying on `.env` for them. `JOLT_CAPACITY_LEDGER` works from either: the CLI re-applies
-the ledger once `.env` is loaded. From the Python API, set all three before
-`import report_generator`.
+relying on `.env` for them; from the Python API, set both before
+`import report_generator`. `JOLT_CAPACITY_LEDGER` may be set later, from `.env` or
+from code: every report re-applies the ledger when it starts
+(`JOLTReportGenerator.generate_report()`, and so `report_generator.generate_report()`
+and the CLI), before it reads the vehicle's capacity.
 
 ## Writable state — the capacity ledger
 

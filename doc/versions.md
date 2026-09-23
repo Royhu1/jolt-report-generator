@@ -621,7 +621,9 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
 - **New public loaders in `report_generator.configs`** — the way to read the configs,
   never by file path: `get_capacity_ledger_path() -> Path | None` (the variable, read at
   call time; unset, empty or blank means none), `load_vehicle_configs() -> dict` (a fresh
-  read of `vehicles.json` with the ledger overlaid) and `load_pipeline_configs() -> dict`,
+  read of `vehicles.json` with the ledger overlaid), `load_pipeline_configs() -> dict` and
+  `apply_capacity_ledger(vehicles, *, skip=None) -> Path | None` (the same overlay,
+  re-applied in place to configs already loaded; a strict no-op without the variable),
   plus the constants `CAPACITY_LEDGER_ENV_VAR` and `LEDGER_KEYS`.
   `segmentation.constants` builds `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` through them —
   still the single load site, still shared by reference; `constants._load_json` is kept
@@ -651,13 +653,18 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   entry is kept, and `vehicles.json` is only read. The summaries start from the ledger
   values. `--dry-run` writes nothing at all in this
   mode, not even the lock file or the ledger's directory.
-- **The CLI honours a ledger named in `.env`.** `python -m report_generator.cli` imports
-  the package — building `VEHICLE_CONFIG` — before `main()` loads `.env`, so a
-  `JOLT_CAPACITY_LEDGER` set only there would have been written by the write-back
-  without ever being read. `main()` now overlays the ledger onto the shared in-memory
-  configs once `.env` is loaded (idempotent if it was already set at import; a no-op
-  without the variable). The same import-order limit applies, unchanged, to
-  `JOLT_CONFIG_DIR` and to the postcode-cache path under `JOLT_CACHE_DIR`;
+- **The ledger is read when a report starts.** The package builds `VEHICLE_CONFIG` at
+  import — for `python -m report_generator.cli` before `main()` loads `.env` — so a
+  `JOLT_CAPACITY_LEDGER` set after the import would have been written by the
+  write-back without ever being read. `JOLTReportGenerator.generate_report()` — behind
+  `report_generator.generate_report()` and the CLI, for the EV and the diesel dispatch
+  alike — now calls `configs.apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the
+  vehicle's config, and `main()` also applies it once `.env` is loaded, before the
+  generator is built (idempotent; a strict no-op without the variable, which never
+  re-reads `vehicles.json`). A runtime fallback config injected by an earlier report is
+  skipped: an un-onboarded vehicle takes no ledger state, so generating it twice in one
+  process gives the same report twice. The same import-order limit applies, unchanged,
+  to `JOLT_CONFIG_DIR` and to the postcode-cache path under `JOLT_CACHE_DIR`;
   `deployment.md` now says to export those rather than rely on `.env`.
 - **Documentation correction.** `deployment.md` said a read-only config directory makes
   the write-back no-op with a warning. It does not: the write-back raises

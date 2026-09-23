@@ -20,6 +20,12 @@ Consumers read the configs through the loaders below, never by file path:
   get_capacity_ledger_path()  the external capacity-ledger file, or None
   load_vehicle_configs()      a fresh read of vehicles.json, ledger overlaid
   load_pipeline_configs()     a fresh read of pipelines.json
+  apply_capacity_ledger(v)    overlay the ledger again onto configs already loaded
+
+The package's shared ``VEHICLE_CONFIG`` is loaded once, at import, but the
+ledger variable is read whenever it is needed: every report re-applies the
+ledger to ``VEHICLE_CONFIG`` (:func:`apply_capacity_ledger`) before it reads the
+vehicle's config, so a variable set after the import is still honoured.
 
 Ledger file schema (one entry per registration; only the two ledger keys are
 read, and a key an entry does not carry leaves the ``vehicles.json`` value)::
@@ -33,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -90,10 +97,32 @@ def load_vehicle_configs() -> dict:
     the variable the result is exactly the parsed ``vehicles.json``.
     """
     vehicles = _load_config_json("vehicles.json")
-    ledger_path = get_capacity_ledger_path()
-    if ledger_path is not None:
-        _overlay_capacity_ledger(vehicles, _read_capacity_ledger(ledger_path))
+    apply_capacity_ledger(vehicles)
     return vehicles
+
+
+def apply_capacity_ledger(
+    vehicles: dict, *, skip: Callable[[dict], bool] | None = None
+) -> Path | None:
+    """Overlay the capacity ledger onto vehicle configs that are already loaded.
+
+    ``vehicles`` maps each registration to its config dict — typically the
+    package's shared in-memory ``VEHICLE_CONFIG``, which is loaded once, at
+    import. The ledger file is looked up and read at call time, so a
+    ``JOLT_CAPACITY_LEDGER`` set after the import is honoured. The overlay is
+    the one :func:`load_vehicle_configs` applies — key by key, a registration
+    not in ``vehicles`` ignored — written in place into the per-registration
+    dicts, so applying it again is harmless. A config for which ``skip(cfg)`` is
+    true is left alone.
+
+    Without the variable this is a strict no-op: nothing is read and
+    ``vehicles`` is not touched. Returns the ledger path applied, or ``None``.
+    """
+    ledger_path = get_capacity_ledger_path()
+    if ledger_path is None:
+        return None
+    _overlay_capacity_ledger(vehicles, _read_capacity_ledger(ledger_path), skip=skip)
+    return ledger_path
 
 
 # ── Internals shared with the capacity write-back and backfill ───────────────
@@ -118,11 +147,13 @@ def _load_config_json(name: str) -> dict:
         return json.load(f)
 
 
-def _overlay_capacity_ledger(vehicles: dict, ledger: dict) -> dict:
+def _overlay_capacity_ledger(
+    vehicles: dict, ledger: dict, *, skip: Callable[[dict], bool] | None = None
+) -> dict:
     """Overlay the ledger keys onto ``vehicles`` in place; return ``vehicles``."""
     for reg, entry in ledger.items():
         cfg = vehicles.get(reg)
-        if cfg is None:
+        if cfg is None or (skip is not None and skip(cfg)):
             continue
         for key in LEDGER_KEYS:
             if key in entry:

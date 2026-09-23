@@ -72,31 +72,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _apply_capacity_ledger() -> None:
-    """Overlay the external capacity ledger onto the in-memory vehicle configs.
-
-    ``VEHICLE_CONFIG`` is built when the package is first imported, which for
-    ``python -m report_generator.cli`` happens before :func:`main` loads the
-    ``.env``. A ``JOLT_CAPACITY_LEDGER`` named only in ``.env`` would otherwise be
-    written by the capacity write-back without ever having been read, so it is
-    overlaid here, in place (the dict is shared by reference). Idempotent when the
-    variable was already set at import; a no-op when it is not set at all.
-    """
-    from report_generator.configs import (
-        _overlay_capacity_ledger,
-        _read_capacity_ledger,
-        get_capacity_ledger_path,
-    )
-
-    ledger_path = get_capacity_ledger_path()
-    if ledger_path is None:
-        return
-    from report_generator.segmentation.constants import VEHICLE_CONFIG
-
-    _overlay_capacity_ledger(VEHICLE_CONFIG, _read_capacity_ledger(ledger_path))
-    logger.info("Capacity ledger: %s", ledger_path)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -137,11 +112,24 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Missing required argument(s): %s", ", ".join(missing))
         return 2
 
-    _apply_capacity_ledger()
+    # Importing the package (which ``python -m report_generator.cli`` does before
+    # this function runs) loaded VEHICLE_CONFIG before the .env above was read,
+    # so a JOLT_CAPACITY_LEDGER named only there is applied now, before the
+    # generator is built. The report applies it again when it starts; the
+    # overlay is idempotent, and a no-op without the variable.
+    from report_generator.configs import apply_capacity_ledger
+    from report_generator.general_pipeline import (
+        VehicleNotFoundError,
+        is_runtime_config,
+    )
+    from report_generator.segmentation.constants import VEHICLE_CONFIG
+
+    ledger_path = apply_capacity_ledger(VEHICLE_CONFIG, skip=is_runtime_config)
+    if ledger_path is not None:
+        logger.info("Capacity ledger: %s", ledger_path)
 
     from report_generator import DATA_NAMESPACE, __version__
     from report_generator._generator import JOLTReportGenerator
-    from report_generator.general_pipeline import VehicleNotFoundError
     from report_generator.paths import default_report_root
 
     # Dual identity, always logged: the code revision and the data namespace it

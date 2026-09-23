@@ -318,6 +318,99 @@ def test_a_damaged_ledger_fails_loudly(
         configs.load_vehicle_configs()
 
 
+# ── apply_capacity_ledger: the overlay onto configs already loaded ───────────
+
+
+def _loaded_before_the_variable():
+    """Configs as a process holds them when the ledger variable is set later."""
+    return json.loads(json.dumps(_VEHICLES))
+
+
+def _forbid(monkeypatch, *names):
+    """Make the named ``configs`` internals fail the test if they are called."""
+
+    def _called(*_args, **_kwargs):
+        raise AssertionError("must not be called")
+
+    for name in names:
+        monkeypatch.setattr(configs, name, _called)
+
+
+def test_applying_the_ledger_without_the_variable_is_a_strict_no_op(monkeypatch):
+    monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
+    vehicles = _loaded_before_the_variable()
+    entry = vehicles["UTVEH01"]
+    _forbid(monkeypatch, "_read_capacity_ledger", "_load_config_json")
+
+    assert configs.apply_capacity_ledger(vehicles) is None
+    assert vehicles == _VEHICLES
+    assert vehicles["UTVEH01"] is entry
+
+
+def test_applying_the_ledger_overlays_configs_loaded_before_it_was_named(
+    monkeypatch, tmp_path
+):
+    vehicles = _loaded_before_the_variable()
+    entry = vehicles["UTVEH01"]
+    q2 = {"20250401_20250701": {"kwh": 432.1, "n": 20}}
+    path = _use_ledger(
+        monkeypatch,
+        tmp_path,
+        {
+            "UTVEH01": {
+                "effective_capacity_kwh": 432.1,
+                "effective_capacity_quarterly": q2,
+            },
+            "NOTAVEH": {"effective_capacity_kwh": 123.0},
+        },
+    )
+    # The configs are never read again: tests and callers may have changed them.
+    _forbid(monkeypatch, "_load_config_json")
+
+    assert configs.apply_capacity_ledger(vehicles) == path
+    assert vehicles["UTVEH01"] is entry  # written in place
+    assert entry["effective_capacity_kwh"] == 432.1
+    assert entry["effective_capacity_quarterly"] == q2
+    assert (entry["nominal_kwh"], entry["pipeline"]) == (540, "ut_speed")
+    assert vehicles["UTVEH02"] == _VEHICLES["UTVEH02"]
+    assert "NOTAVEH" not in vehicles  # the ledger cannot configure a vehicle
+
+
+def test_applying_the_ledger_matches_the_loader_and_is_idempotent(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    _use_ledger(monkeypatch, tmp_path, {"UTVEH01": {"effective_capacity_kwh": 410.0}})
+    vehicles = _loaded_before_the_variable()
+    configs.apply_capacity_ledger(vehicles)
+    once = json.loads(json.dumps(vehicles))
+    configs.apply_capacity_ledger(vehicles)
+    assert vehicles == once == configs.load_vehicle_configs()
+
+
+def test_applying_the_ledger_leaves_a_skipped_config_alone(monkeypatch, tmp_path):
+    vehicles = _loaded_before_the_variable()
+    vehicles["UTVEH02"]["_marker"] = True
+    _use_ledger(
+        monkeypatch,
+        tmp_path,
+        {
+            "UTVEH01": {"effective_capacity_kwh": 410.0},
+            "UTVEH02": {"effective_capacity_kwh": 999.9},
+        },
+    )
+    configs.apply_capacity_ledger(vehicles, skip=lambda cfg: bool(cfg.get("_marker")))
+    assert vehicles["UTVEH01"]["effective_capacity_kwh"] == 410.0
+    assert vehicles["UTVEH02"]["effective_capacity_kwh"] == 200.0
+
+
+def test_applying_a_damaged_ledger_fails_loudly(monkeypatch, tmp_path):
+    vehicles = _loaded_before_the_variable()
+    _use_ledger(monkeypatch, tmp_path, text="[]")
+    with pytest.raises(ValueError):
+        configs.apply_capacity_ledger(vehicles)
+    assert vehicles == _VEHICLES
+
+
 def test_the_import_time_vehicle_config_goes_through_the_public_loader(tmp_path):
     """``segmentation.constants`` builds ``VEHICLE_CONFIG`` with the overlay applied.
 

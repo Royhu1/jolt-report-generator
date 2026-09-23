@@ -226,7 +226,7 @@ repo-root run:
 | `SRF_API_KEY` | SRF platform API key (required to fetch) | — (CLI fails fast, rc 2) |
 | `OPENWEATHER_API_KEYS` | comma-separated OpenWeather keys (weather post-step only) | — (weather skipped) |
 | `JOLT_CONFIG_DIR` | directory holding `vehicles.json` + `pipelines.json`; also where the capacity ledger is written back when `JOLT_CAPACITY_LEDGER` is unset | the vendored `configs/` dir |
-| `JOLT_CAPACITY_LEDGER` | path of an external capacity-ledger JSON file: the ledger keys are overlaid from it at load and written back to it, and `vehicles.json` is never written | — (ledger kept in `vehicles.json`) |
+| `JOLT_CAPACITY_LEDGER` | path of an external capacity-ledger JSON file: the ledger keys are overlaid from it at load and again when each report starts, and written back to it, and `vehicles.json` is never written | — (ledger kept in `vehicles.json`) |
 | `JOLT_CACHE_DIR` | cache root (`srf_http/`, `srf_raw/`, weather, postcode) | `./cache` |
 | `SRF_API_ROOT` | SRF REST API root | `https://data.csrf.ac.uk/api/` |
 | `WEATHER_CACHE_FILE` / `WEATHER_CACHE_FILE_FINE` | override the coarse / fine weather cache file paths | `<cache>/.weather_cache.json` / `<cache>/weather/.weather_cache_fine.json` |
@@ -249,6 +249,7 @@ should read the configs — never by file path:
 | `load_pipeline_configs()` | a fresh read of `pipelines.json` |
 | `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
 | `get_config_path(name)` | the path of a config file in the active directory |
+| `apply_capacity_ledger(vehicles, skip=None)` | overlays the ledger again, in place, onto configs already loaded (typically `VEHICLE_CONFIG`) and returns its path; without the variable a strict no-op returning `None` |
 
 `vehicles.json` holds two kinds of data. The **parameters** (everything below except
 the two ledger keys) are reviewed, tuned values that change only through a reviewed
@@ -257,6 +258,16 @@ edit. The **capacity ledger** (`effective_capacity_kwh` + `effective_capacity_qu
 ledger lives in its own file — overlaid key by key on the registrations present in both,
 a ledger-only registration ignored — and the write-back and the backfill write that file
 instead of `vehicles.json`.
+
+`VEHICLE_CONFIG` is loaded at import, but the ledger variable may be set after it (a
+`.env` loaded later). So `JOLTReportGenerator.generate_report()` — the entry point
+behind `report_generator.generate_report()` and the CLI, for EV and diesel alike —
+calls `apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the vehicle's config:
+the capacity a report reads comes from the ledger its write-back targets. A runtime
+fallback config is skipped (`skip=is_runtime_config`), since an un-onboarded vehicle
+takes no ledger state. Code that drives the segmentation directly
+(`run_segment_detection`, which reads the capacity seed too) and names the ledger
+after the import calls `apply_capacity_ledger(VEHICLE_CONFIG)` itself.
 
 ### `configs/vehicles.json`
 
