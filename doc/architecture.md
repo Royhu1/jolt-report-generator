@@ -496,6 +496,7 @@ nothing.
 | top level | `trip_endpoint_anchor` | `"first_motion"` (default) or `"zero_speed"` (extend trip ends to the nearest v==0 within `max_extend_minutes`, for low-rate telematics) |
 | top level | `max_extend_minutes` | float, default 5.0; the zero_speed extension cap |
 | top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). The value feeds the Excel `Vehicle Mass (kg)` column and is re-used by the external figure / fine-tuning tooling. Vehicle-level override wins |
+| top level | `reconcile_charge_boundaries` | bool, default `false` (only JSON `true` switches it on): clamp a charge that overlaps a trip to the trip's boundary — see *Segmentation algorithms*. For a pipeline whose trips come from a higher-rate signal than its charges (Logger-speed trips on a sparse telematics feed); a vehicle reaches it through its `pipeline`, including a `period_overrides` window's |
 | `charge_params` | `plateau_window_min` / `min_soc_rise` / `min_energy_kwh` | charge merge window + SOC-rise + energy thresholds |
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
 | `speed_params` | `speed_threshold_kmh` / `min_stop_duration_min` / `min_trip_duration_min` / `min_soc_drop` / `min_energy_kwh` | speed-branch trip boundaries + lenient SOC/energy checks |
@@ -519,6 +520,8 @@ run_segment_detection
   ├─ split_discharge_by_mass  (split where the cluster label changes)
   ├─ merge_discharge_by_mass  (merge adjacent same-cluster; skipped when merge_by_mass=false)
   ├─ _enforce_anchor_ordering (post-pass: clamp energy anchors so anchor_end(i) ≤ start(i+1))
+  ├─ _reconcile_charge_boundaries (opt-in post-pass, reconcile_charge_boundaries: clamp a
+  │                               charge overlapping a trip to the trip's boundary)
   └─ attach_ep_audits         (measure each segment's EP-confidence diagnostics off the
                                final anchors → the public ``ep_audit`` key; read-only)
 ```
@@ -535,6 +538,21 @@ run_segment_detection
   `find_speed_trips()` (drive blocks with v > `speed_threshold_kmh`, bridge stops
   < `min_stop_duration_min`, drop trips < `min_trip_duration_min`); SOC/energy used only
   for metrics. Both branches emit an identical segment schema.
+- **Charge / trip boundary reconciliation (opt-in, `reconcile_charge_boundaries`)**: on a
+  sparse telematics feed a charge ends at the first sample after the charging, which can
+  be taken once the vehicle has set off — after the start of a trip found on the 1 Hz
+  Logger speed. On the final segments (after the split, merge and anchor ordering,
+  before the EP audits and the figure hook, so an external renderer sees the same
+  result) each charge that overlaps a trip gives way to it: a trip starting inside the
+  charge moves the charge's end to the trip's start, a trip ending inside it moves the
+  charge's start to the trip's end. Only the time axis changes — the charge's SOC values,
+  energy, energy source and energy anchors stay as observed — and the new time keeps the
+  charge's own time-zone form. A charge is left whole, with a warning, when a trip lies
+  wholly inside it, when it lies wholly inside a trip, or when the clamps would leave it
+  no duration; the number of clamped boundaries is logged. Everything derived from a
+  charge row's times follows: its duration and battery power, the Stop rows (none
+  between a clamped charge and its trip), and the charger fusion, which still matches
+  the session inside the charge.
 
 Mass: `cluster_mass_data` filters to valid (>0), moving-only (`speed > MOVING_SPEED_THRESHOLD_KMH`)
 samples, then `_agg_mass` applies the configured method; the same value feeds the Excel
