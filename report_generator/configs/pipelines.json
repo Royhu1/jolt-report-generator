@@ -356,6 +356,29 @@
       "min_energy_kwh": 2.0
     }
   },
+  "mercedes_logger_speed": {
+    "branch": "speed",
+    "min_trip_distance_km": 10.0,
+    "charge_params": {
+      "plateau_window_min": 60,
+      "min_soc_rise": 5.0,
+      "min_energy_kwh": 5.0
+    },
+    "discharge_params": {
+      "plateau_window_min": 20,
+      "soc_rise_abort_pct": 3.0,
+      "min_soc_drop": 5.0,
+      "min_energy_kwh": 2.0
+    },
+    "merge_by_mass": false,
+    "speed_params": {
+      "speed_threshold_kmh": 1.0,
+      "min_stop_duration_min": 31.0,
+      "min_trip_duration_min": 2.0,
+      "min_soc_drop": 2.0,
+      "min_energy_kwh": 1.0
+    }
+  },
   "mercedes_speed": {
     "branch": "speed",
     "merge_by_mass": false,
