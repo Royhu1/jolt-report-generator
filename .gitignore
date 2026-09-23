@@ -22,3 +22,7 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Claude Code local state (agent instructions in .claude/rules/ are tracked)
+.claude/worktrees/
+.claude/settings.local.json

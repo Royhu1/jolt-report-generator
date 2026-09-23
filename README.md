@@ -1,5 +1,8 @@
 # jolt-report-generator
 
+**Role: core repo** — the JOLT Excel report generator, its offline test suite and its
+documentation. Changes arrive as reviewed pull requests; `main` is the release line.
+
 Generates the JOLT Excel report for a vehicle over a date range: it pulls the vehicle's
 legs and raw telematics from the SRF platform, segments them into trips / charges / stops,
 computes the energy and mass metrics, and writes a formatted `.xlsx`.
