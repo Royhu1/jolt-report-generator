@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~60 s, 1122 tests, fully offline
+pytest                       # ~60 s, 1173 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -40,8 +40,8 @@ The five contract files directly under `tests/` predate this suite.
 | Area | Tests |
 |------|-------|
 | Existing contract suite (`tests/*.py`) | 254 |
-| `unit/` | 604 |
-| `integration/` | 264 |
+| `unit/` | 633 |
+| `integration/` | 286 |
 
 ## The offline guarantee
 
@@ -129,7 +129,7 @@ worth faking:
 |------|--------------------------|
 | `charger_patcher._fetch_charger_windows`, `logger_patcher._fetch_logger_data` | Pure SRF query construction + paging. `patch_file` is covered instead, by injecting the windows/legs those methods would return — which is the interesting half. |
 | `weather_fetcher.WeatherFetcher.fetch_single` / `fetch_batch`, `fine_grained_patcher`, `weather_patch` | These exist to spend a paid OpenWeather quota. Mocking `requests` here would test the mock, not the fetcher. The pure helpers (`_parse_point`, `_deg_to_cardinal`, `_cell_needs_patch`, `_to_unix_utc`, `_is_ev_layout`, the whole `WeatherCache`) ARE covered, including the cache key format that protects the quota, and `WeatherPatcher.patch_file` is driven end to end over a fully cached stub (no fetcher at all) in `unit/test_weather_patcher_layout.py`. |
-| `_generator._collect_legs` / `_preload_logger_channels` / `_process_fps_legs` / `_save_logger_data` | The SRF iteration half of the orchestrator. The transformation half it drives (`run_segment_detection` -> `_seg_to_row` -> `_insert_stop_rows` -> `_write_excel_report`) is covered end to end on real fixture data in `integration/test_excel_end_to_end.py`, and `generate_report` itself is exercised with a mocked SRF surface in `integration/test_runtime_fallback.py`. |
+| `_generator._collect_legs` / `_preload_logger_channels` / `_process_fps_legs` / `_save_logger_data` | The SRF iteration half of the orchestrator. The transformation half it drives (`run_segment_detection` -> `_seg_to_row` -> `_insert_stop_rows` -> `_write_excel_report`) is covered end to end on real fixture data in `integration/test_excel_end_to_end.py`, and `generate_report` itself is exercised with a mocked SRF surface in `integration/test_runtime_fallback.py` and `integration/test_capacity_ledger_at_report_start.py`. |
 | `data_fetcher.fetch_events` | Six lines of SRF filter construction. |
 
 ## Conventions

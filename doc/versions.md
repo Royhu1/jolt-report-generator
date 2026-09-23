@@ -683,15 +683,23 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   says so and recommends the external ledger for a read-only config directory.
 - **Test suite.** The session conftest removes `JOLT_CAPACITY_LEDGER` at import, since a
   value inherited from the developer's shell would both change what the suite reads and
-  let a test write into a real ledger. New: 19 unit tests of the loaders and the overlay
+  let a test write into a real ledger. New: 24 unit tests of the loaders and the overlay
   semantics (both keys, a partial entry, an uncovered vehicle, a ledger-only
-  registration, a missing / blank / damaged file, and the import-time overlay in a fresh
-  interpreter) and 23 integration tests of the write side (ledger written and
-  `vehicles.json` untouched, the lock, seeding from memory and from the file, merging
-  into an existing entry, the membership rule, the no-donor no-op, backfill into the
-  ledger, the dry run, and both targets producing the same entry, byte-for-byte for the
-  unset path), plus 2 CLI tests (a ledger named only in `.env` is read before the
-  generator is built; without the variable the configs are left alone).
+  registration, a missing / blank / damaged file, the import-time overlay in a fresh
+  interpreter, and `apply_capacity_ledger` on configs already loaded — a strict no-op
+  without the variable, in place, idempotent, the skip rule); 40 integration tests of
+  the write side (ledger written and `vehicles.json` untouched, the lock, seeding from
+  memory and from the file, merging into an existing entry, a partial entry continuing
+  the history the reports read, the merge equal to the loader's view for every entry
+  shape, the membership rule, the no-donor no-op, backfill into the ledger — a partial
+  entry written out in full — the dry run, both targets producing the same entry,
+  byte-for-byte for the unset path, and the atomic file write: a direct write's bytes
+  and permission bits, a failure part-way leaving the old ledger whole, the
+  `PermissionError` retry and its limit, no temporary file left behind); 5 integration
+  tests of the ledger read at report start (the EV and the diesel dispatch, the
+  convenience function, the strict no-op without the variable, a runtime fallback
+  config left alone); plus 2 CLI tests (a ledger named only in `.env` is read before
+  the generator is built; without the variable the configs are left alone).
 - **Repository tooling** (no effect on the package or on any report):
   - CI — `.github/workflows/tests.yml` runs the offline suite on ubuntu / Python 3.11,
     from a clean install of the two requirements files, on every push and pull request.
@@ -711,11 +719,13 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
     registers it in `tests/fixtures/raw_fixtures.json` and adds its frozen config;
     `regenerate_goldens.py --alias` writes its first golden; and
     `integration/test_registered_fixtures.py` guards every registered fixture — golden,
-    determinism, consumer contract, de-identification, registry consistency. Tried end
+    determinism, consumer contract, de-identification (the maker's spelling rule
+    included, for every live registration, in the file and its path), registry
+    consistency. Tried end
     to end on a real EV telematics file and a real SRFLOGGER_V2 logger file in a
     scratch clone (geodesic step distances preserved to 1e-12 km, headings consistent
     with the rotated track, registration absent, the full suite green with both
     fixtures added). The four original fixtures' heading columns predate the heading
     rule and are verbatim.
 
-  Full suite: **1118 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
+  Full suite: **1169 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
