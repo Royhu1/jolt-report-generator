@@ -14,6 +14,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from ..configs import effective_vehicle_config
 from ..ep_confidence import attach_ep_audits
 from .constants import (
     AC_COL,
@@ -45,6 +46,7 @@ from .speed_detection import (
     find_discharge_segments_by_speed,
     find_speed_trips,
 )
+from .timeutil import frame_utc_date
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,12 @@ def run_segment_detection(
     find_charge_segments_by_soc / find_discharge_segments_by_soc, ensuring the
     column-name mapping and the SOC-estimate fallback both use the vehicle's
     correct configuration.
+
+    A vehicle with date-effective settings (``period_overrides``) is resolved for
+    the leg's date — the UTC date of the first valid timestamp of ``df_raw`` — so
+    every caller handing this function the same frame (the generator, an
+    external renderer) segments it with the same settings, and none has to
+    resolve anything itself.
 
     Parameters
     ----------
@@ -146,6 +154,12 @@ def run_segment_detection(
     saving to CSV (see _ANCHOR_PRIVATE_KEYS).
     """
     cfg = VEHICLE_CONFIG.get(reg, {})
+    # Date-effective settings: resolved for this leg's date, taken from the frame
+    # itself. A vehicle without the field is read as it is, at no extra cost.
+    leg_day = None
+    if cfg.get("period_overrides"):
+        leg_day = frame_utc_date(df_raw)
+        cfg = effective_vehicle_config(cfg, leg_day)
     _ac_col = cfg.get("ac_col", AC_COL)
     _dc_col = cfg.get("dc_col", DC_COL)
     _tot_col = cfg.get("total_energy_col", TOTAL_ENERGY_COL)
@@ -478,7 +492,7 @@ def run_segment_detection(
         out_path = val_dir / f"validation_{reg}_{suffix}.png"
         _mass_col = cfg.get("mass_col", MASS_COL)
         _speed_col = cfg.get("speed_col", "wheel_based_speed")
-        _mass_agg = resolve_mass_agg(reg, _pipeline_cfg)
+        _mass_agg = resolve_mass_agg(reg, _pipeline_cfg, when=leg_day)
         figure_hook(
             df_raw,
             charge_segs,

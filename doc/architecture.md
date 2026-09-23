@@ -250,6 +250,7 @@ should read the configs — never by file path:
 | `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
 | `get_config_path(name)` | the path of a config file in the active directory |
 | `apply_capacity_ledger(vehicles, skip=None)` | makes the two ledger keys of configs already loaded (typically `VEHICLE_CONFIG`) what a fresh `load_vehicle_configs()` gives — for each registration also in `vehicles.json` and not skipped: the ledger's value, else the `vehicles.json` value, else no key — in place, and returns the ledger path; without the variable a strict no-op that reads nothing and returns `None` |
+| `effective_vehicle_config(cfg, when)` | a vehicle's entry as it applies on `when`: a new dict with the `set` of the `period_overrides` window containing that date applied, and no `period_overrides` key (pure, idempotent — see below) |
 
 `vehicles.json` holds two kinds of data. The **parameters** (everything below except
 the two ledger keys) are reviewed, tuned values that change only through a reviewed
@@ -294,6 +295,11 @@ Each vehicle entry:
 | `altitude_col` | `str` | altitude column for elevation-corrected EP |
 | `min_cluster_gap_kg` | `float` | minimum mass-clustering gap for `merge_discharge_by_mass()` |
 | `split_long_stops_min` | `float` (optional) | refuse to merge same-mass trips separated by a stop ≥ this many minutes |
+| `prefer_logger_speed` | `bool` (optional, EV) | on a speed-branch pipeline, detect the trips on the Logger speed channel even where the telematics feed has speed values (for a feed whose speed cannot be trusted); without it the Logger speed is used only when the feed has none |
+| `min_stop_duration_min` | `float` (optional) | EV: replaces the pipeline's `speed_params.min_stop_duration_min` (the longest stop still bridged within a trip) and sets the zero-speed window of the mass split; diesel: the trip segmentation's stop gap |
+| `split_by_mass` | `bool` (optional, EV) | split trips where the mass cluster changes (load / unload); default `true` |
+| `merge_by_mass` | `bool` (optional, EV) | merge adjacent trips of the same mass cluster; takes precedence over the pipeline's `merge_by_mass`; default `true` |
+| `period_overrides` | `list` (optional, EV) | date-effective settings: dated windows that change the settings above from a given date on — see *Date-effective settings* below |
 
 **How `model` is set.** SRF is the **default** source and its string is copied verbatim,
 including terse platform values (`"XD"`, `"P410"`) — they are never dressed up into marketing
@@ -322,6 +328,61 @@ reads the key, and `_collect_legs` takes every leg whose `trip.source` starts wi
 `fuel_energy_col`, `fuel_rate_col`, `distance_col`,
 `diesel_lhv_kwh_per_l` (default 10.0), `speed_col_fallback`, `ambient_temp_col` —
 example under §Diesel pipeline.
+
+#### Date-effective settings (`period_overrides`)
+
+A vehicle's segmentation settings can change from a given date on, leaving every leg
+before it segmented exactly as before — for a feed that changes character, say, where
+the telematics speed thins out and the trips have to be found on the Logger speed
+instead:
+
+```json
+"period_overrides": [
+  {"from": "2026-07-07", "to": null, "reason": "free text, documentation only",
+   "set": {"pipeline": "default_speed", "prefer_logger_speed": true}}
+]
+```
+
+- `from` (**required**) is the first day the window applies, `to` (optional; `null` or
+  absent for open-ended) the first day it no longer does — the window is `[from, to)`.
+  Both are dates written `YYYY-MM-DD`. `reason` is optional text. `set` (**required**,
+  non-empty) holds the settings the window changes.
+- `set` may change only the vehicle settings the per-leg segmentation reads
+  (`configs.PERIOD_OVERRIDE_KEYS`): `pipeline`, `prefer_logger_speed`,
+  `min_stop_duration_min`, `split_by_mass`, `merge_by_mass`, `split_long_stops_min`,
+  `min_cluster_gap_kg` — the ones `run_segment_detection` reads from the vehicle entry —
+  and `mass_agg`, which `resolve_mass_agg` reads, so a window can change the
+  per-segment mass estimator too (a vehicle-level `mass_agg` outranks the pipeline's,
+  so switching the pipeline alone could not). Everything else stays whole-vehicle: the
+  column mappings describe the feed, the capacity keys and the ledger are the vehicle's
+  battery state, `fuel_type` / `srf_reg` its identity, and the operator has its own
+  dated `operators` list.
+- `load_vehicle_configs()`, and so the import-time load, rejects a malformed list with a
+  `ValueError` naming the vehicle and the override: a key outside the allow-list, a
+  value of the wrong kind (a flag that is not `true`/`false`, a duration or gap that is
+  not a positive number — `split_long_stops_min` may be `null` to switch it off for the
+  window), a missing or empty `set`, a missing `from`, an unknown field, a date that is
+  not `YYYY-MM-DD`, `to` not after `from`, overlapping windows (adjacent ones, where one
+  window's `to` is the next one's `from`, are fine), a `pipeline` not in
+  `pipelines.json`. A DIESEL vehicle may not carry the field: its legs are segmented by
+  the diesel pipeline, which reads its own settings, not through the path the overrides
+  feed.
+- **Resolution.** A leg's settings are the base entry updated with the `set` of the one
+  window containing the leg's date — `configs.effective_vehicle_config(cfg, when)`,
+  which returns a new dict without `period_overrides`, never modifies `cfg`, and gives
+  the same result when applied again. The leg's date is the **UTC date of the first
+  valid timestamp of its telematics frame** (`segmentation.timeutil.frame_utc_date`), so
+  a leg starting at 23:59 UTC the day before `from` keeps the base settings even though
+  it runs past midnight. `run_segment_detection` resolves it itself, from the frame it is
+  handed; the generator resolves the per-segment mass estimator it gives the row builder
+  from the same frame, with `resolve_mass_agg(reg, when=...)`. A vehicle without the
+  field costs one key lookup per leg and is segmented exactly as before.
+- **Callers outside the package.** A caller of `run_segment_detection(df, reg, …)` needs
+  nothing: it resolves the same settings the generator does for the same frame. A
+  caller that reads a per-leg setting from the vehicle entry itself resolves it for the
+  leg first — `effective_vehicle_config(VEHICLE_CONFIG[reg], frame_utc_date(df))`, or
+  `resolve_mass_agg(reg, when=frame_utc_date(df))` for the mass estimator; without a date
+  both give the base settings.
 
 #### SRF telematics energy counters
 

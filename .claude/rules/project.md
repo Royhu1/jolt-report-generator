@@ -18,9 +18,10 @@
 - Python: `report_generator.JOLTReportGenerator`, `report_generator.generate_report()`,
   `report_generator.__version__`, `report_generator.DATA_NAMESPACE`.
 - Configuration: `report_generator.configs.load_vehicle_configs()` /
-  `load_pipeline_configs()` / `get_config_path()` / `get_capacity_ledger_path()`; state via
-  `JOLT_CAPACITY_LEDGER`, caches via `JOLT_CACHE_DIR`, config override via `JOLT_CONFIG_DIR`
-  (`doc/deployment.md`).
+  `load_pipeline_configs()` / `get_config_path()` / `get_capacity_ledger_path()` /
+  `apply_capacity_ledger()` / `effective_vehicle_config()` (a vehicle's date-effective
+  settings for a leg, `doc/architecture.md`); state via `JOLT_CAPACITY_LEDGER`, caches
+  via `JOLT_CACHE_DIR`, config override via `JOLT_CONFIG_DIR` (`doc/deployment.md`).
 - Names the JOLT workspace's skills import (keep them stable, or change them together with
   the workspace): `report_generator._generator.JOLTReportGenerator` and its capacity helpers,
   `report_generator.segmentation.{constants,detection,mass_aggregation,mass_clustering,timeutil}`,

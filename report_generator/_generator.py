@@ -83,6 +83,7 @@ from report_generator.segment_algorithms import (
     resolve_mass_agg,
     run_segment_detection,
 )
+from report_generator.segmentation.timeutil import frame_utc_date
 from report_generator.xlsx_patch_common import make_srf_client
 
 logger = logging.getLogger(__name__)
@@ -782,7 +783,8 @@ class JOLTReportGenerator:
             # Figures are painted externally via the figure_hook seam, never
             # inline here — so no hook is passed and
             # segmentation runs figure-free. The raw CSV was written independently
-            # above (gated on debug_mode).
+            # above (gated on debug_mode). run_segment_detection resolves the
+            # vehicle's date-effective settings for this frame itself.
             c_segs, d_segs = run_segment_detection(
                 df_leg,
                 reg=reg,
@@ -795,6 +797,14 @@ class JOLTReportGenerator:
                 logger_mass_df=leg_logger_mass,
                 charger_meter_df=leg_charger_meter,
             )
+
+            # The per-segment mass estimator for this leg: for a vehicle with
+            # date-effective settings, resolved for the leg's date from the same
+            # frame, exactly as run_segment_detection resolved it above;
+            # otherwise the one resolved once for the whole report.
+            leg_mass_agg = mass_agg
+            if VEHICLE_CONFIG.get(reg, {}).get("period_overrides"):
+                leg_mass_agg = resolve_mass_agg(reg, when=frame_utc_date(df_leg))
 
             # ── Operator code (per-leg; shared by all segments of the same leg) ──
             op_code, _op_src, _op_unknown = derive_leg_operator(
@@ -827,7 +837,7 @@ class JOLTReportGenerator:
                     altitude_col=altitude_col,
                     speed_col=speed_col,
                     operator=op_code,
-                    mass_agg=mass_agg,
+                    mass_agg=leg_mass_agg,
                     mass_col=mass_col,
                 )
                 all_rows.append((seg["start_time"], list(row)))
@@ -853,7 +863,7 @@ class JOLTReportGenerator:
                     logger_acc_pedal_all=logger_acc_pedal_all,
                     logger_dec_pedal_all=logger_dec_pedal_all,
                     operator=op_code,
-                    mass_agg=mass_agg,
+                    mass_agg=leg_mass_agg,
                     mass_col=mass_col,
                 )
                 all_rows.append((seg["start_time"], list(row)))
