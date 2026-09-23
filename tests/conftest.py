@@ -17,6 +17,11 @@ imported):
    client; making the key empty means a stray attempt fails loudly rather than
    silently authenticating.
 
+3. ``JOLT_CAPACITY_LEDGER`` is removed. ``VEHICLE_CONFIG`` overlays that file at
+   import, and the capacity write-back targets it, so a value inherited from the
+   developer's shell would both change what the suite reads and let a test write
+   into a real ledger. A test that exercises the ledger sets it on ``tmp_path``.
+
 The rest of the file provides the shared fixtures: the fixture directory, the
 raw-telematics / logger loaders (matching production's ``read_csv`` options
 exactly), and the frozen alias configs injected into the shared
@@ -44,6 +49,8 @@ os.environ.setdefault("WEATHER_CACHE_FILE", str(Path(_TEST_CACHE_DIR) / "weather
 # OpenWeather key rotation reads this; empty means "no keys", so no request can
 # ever be built even if a fetcher were constructed.
 os.environ.setdefault("OPENWEATHER_API_KEYS", "")
+# Never read or write a real capacity ledger (see the module docstring).
+os.environ.pop("JOLT_CAPACITY_LEDGER", None)
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook

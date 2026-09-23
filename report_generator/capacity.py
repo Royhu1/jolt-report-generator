@@ -7,8 +7,9 @@ the row-tuple column-index bookkeeping (``_row_idx`` / ``_IDX_*``), the
 per-period donor capacity (:func:`_period_capacity_from_rows`), the quarterly
 weighted-average schema (:func:`_recompute_weighted_capacity`), the time-local
 ±1σ capacity correction (:func:`_correct_effective_capacity`) and the
-``vehicles.json`` capacity-ledger write-back
-(:func:`_persist_effective_capacity`).
+capacity-ledger write-back (:func:`_persist_effective_capacity`) — into
+``vehicles.json``, or into the external ledger file ``JOLT_CAPACITY_LEDGER``
+names.
 
 The two big functions were ``@staticmethod``s on ``JOLTReportGenerator``; they
 are re-exposed there (``JOLTReportGenerator._correct_effective_capacity`` /
@@ -733,9 +734,17 @@ def _correct_effective_capacity(
 def _persist_effective_capacity(
     reg: str, eff_cap: float | None, n_donors: int, source: str, period_key: str
 ) -> None:
-    """Merge this report period's effective capacity into vehicles.json.
+    """Merge this report period's effective capacity into the capacity ledger.
 
-    New schema:
+    The ledger is the two keys ``effective_capacity_kwh`` /
+    ``effective_capacity_quarterly`` of the vehicle's entry. They are written
+    back into ``vehicles.json``, or — when ``JOLT_CAPACITY_LEDGER`` names a file
+    (:func:`report_generator.configs.get_capacity_ledger_path`, read at call
+    time) — into that file, in which case ``vehicles.json`` is never written.
+    Either way only a vehicle that is in ``vehicles.json`` gets an entry, and the
+    in-memory ``VEHICLE_CONFIG`` is updated to match.
+
+    Schema:
     - ``effective_capacity_quarterly``: ``{period_key: {kwh, n}}``, period_key =
       the report-period string ``YYYYMMDD_YYYYMMDD``, 1:1 with the quarterly report.
       This period writes ``{kwh: round(eff_cap, 1), n: n_donors}``.
@@ -748,15 +757,24 @@ def _persist_effective_capacity(
 
     Written only when source is 'charge' / 'discharge' (from telematics donors);
     source='fallback' (no donor, e.g. the pure-soc_estimate SOC-only Mercedes) does
-    not write and does not touch the existing scalar. This also fixes the capacity
-    drift bug caused by the old implementation's "single-period mean overwrite".
+    not write and does not touch the existing scalar. Each period is merged into
+    the stored history rather than overwriting the scalar with one period's mean,
+    which is what keeps the average from drifting with the latest report.
     """
+    from report_generator.configs import get_capacity_ledger_path
+
+    ledger_path = get_capacity_ledger_path()
     if source == "fallback" or eff_cap is None:
         logger.info(
-            "effective capacity source is fallback (no donor), "
-            "not updating vehicles.json: %s %s",
+            "effective capacity source is fallback (no donor), not updating %s: %s %s",
+            "vehicles.json" if ledger_path is None else ledger_path,
             reg,
             period_key,
+        )
+        return
+    if ledger_path is not None:
+        _persist_to_capacity_ledger(
+            ledger_path, reg, eff_cap, n_donors, source, period_key
         )
         return
 
@@ -775,24 +793,96 @@ def _persist_effective_capacity(
         if reg not in all_cfg:
             return
 
-        entry = all_cfg[reg]
-        old_val = entry.get("effective_capacity_kwh")
-        quarterly = entry.get("effective_capacity_quarterly") or {}
-        quarterly[period_key] = {"kwh": round(float(eff_cap), 1), "n": int(n_donors)}
-
-        wavg, n_rel, n_sparse = _recompute_weighted_capacity(quarterly)
-        entry["effective_capacity_quarterly"] = quarterly
-        if wavg is not None:
-            entry["effective_capacity_kwh"] = wavg
+        old_val, quarterly, wavg, n_rel, n_sparse = _merge_period_capacity(
+            all_cfg[reg], eff_cap, n_donors, period_key
+        )
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(all_cfg, f, indent=2, ensure_ascii=False)
             f.write("\n")
-    # Sync the in-memory VEHICLE_CONFIG
+    _sync_persisted_capacity(reg, quarterly, wavg)
+    _log_persisted_capacity(
+        reg, old_val, wavg, period_key, eff_cap, n_donors, source, n_rel, n_sparse
+    )
+
+
+def _persist_to_capacity_ledger(
+    ledger_path, reg: str, eff_cap: float, n_donors: int, source: str, period_key: str
+) -> None:
+    """The external-ledger half of :func:`_persist_effective_capacity`.
+
+    Same merge, same membership rule, a different file: the read-modify-write
+    runs under ``<ledger>.lock``, the file (and its directory) is created on the
+    first write, and ``vehicles.json`` is only read — for the membership check —
+    never written. A vehicle that has no ledger entry yet is seeded from its
+    in-memory ``VEHICLE_CONFIG`` values (``vehicles.json`` as loaded, with any
+    ledger overlay; the ``vehicles.json`` entry itself for a vehicle absent from
+    memory), so switching a deployment to an external ledger continues each
+    vehicle's capacity history instead of restarting it.
+    """
+    import copy
+
+    from report_generator.configs import (
+        LEDGER_KEYS,
+        _ledger_lock,
+        _load_config_json,
+        _read_capacity_ledger,
+        _write_capacity_ledger,
+    )
+
+    on_disk = _load_config_json("vehicles.json")
+    if reg not in on_disk:
+        return
+
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    with _ledger_lock(ledger_path):
+        ledger = _read_capacity_ledger(ledger_path, lock=False)
+        entry = ledger.get(reg)
+        if entry is None:
+            seed = VEHICLE_CONFIG.get(reg) or on_disk[reg]
+            entry = {k: copy.deepcopy(seed[k]) for k in LEDGER_KEYS if k in seed}
+            ledger[reg] = entry
+        old_val, quarterly, wavg, n_rel, n_sparse = _merge_period_capacity(
+            entry, eff_cap, n_donors, period_key
+        )
+        _write_capacity_ledger(ledger_path, ledger)
+    _sync_persisted_capacity(reg, quarterly, wavg)
+    _log_persisted_capacity(
+        reg, old_val, wavg, period_key, eff_cap, n_donors, source, n_rel, n_sparse
+    )
+    logger.info("capacity ledger written: %s", ledger_path)
+
+
+def _merge_period_capacity(
+    entry: dict, eff_cap: float, n_donors: int, period_key: str
+) -> tuple:
+    """Merge one period's ``(kwh, n)`` into a ledger entry, in place.
+
+    Shared by both write targets so they cannot compute different numbers.
+    Returns ``(old_kwh, quarterly, weighted_avg|None, n_reliable, n_sparse)``.
+    """
+    old_val = entry.get("effective_capacity_kwh")
+    quarterly = entry.get("effective_capacity_quarterly") or {}
+    quarterly[period_key] = {"kwh": round(float(eff_cap), 1), "n": int(n_donors)}
+
+    wavg, n_rel, n_sparse = _recompute_weighted_capacity(quarterly)
+    entry["effective_capacity_quarterly"] = quarterly
+    if wavg is not None:
+        entry["effective_capacity_kwh"] = wavg
+    return old_val, quarterly, wavg, n_rel, n_sparse
+
+
+def _sync_persisted_capacity(reg: str, quarterly: dict, wavg: float | None) -> None:
+    """Mirror a persisted ledger entry into the in-memory ``VEHICLE_CONFIG``."""
     VEHICLE_CONFIG.setdefault(reg, {})
     VEHICLE_CONFIG[reg]["effective_capacity_quarterly"] = quarterly
     if wavg is not None:
         VEHICLE_CONFIG[reg]["effective_capacity_kwh"] = wavg
+
+
+def _log_persisted_capacity(
+    reg, old_val, wavg, period_key, eff_cap, n_donors, source, n_rel, n_sparse
+) -> None:
     logger.info(
         "effective_capacity updated: %s  %.1f → %.1f kWh "
         "(this period %s: kwh=%.1f n=%d source=%s; reliable quarters=%d, sparse=%d)",

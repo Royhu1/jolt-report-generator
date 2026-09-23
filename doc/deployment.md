@@ -10,7 +10,8 @@ In: a vehicle registration + an inclusive date range. Out: one formatted multi-s
 
 Pure batch — one invocation per `(vehicle, period)`, no server, no database, no
 long-running process. The only state written outside the output folder is the capacity
-ledger in the config directory and the caches (both below).
+ledger (in its own file when `JOLT_CAPACITY_LEDGER` is set, otherwise inside
+`vehicles.json`) and the caches (both below).
 
 ## Requirements
 
@@ -49,7 +50,8 @@ path = gen.generate_report("KY24LHT", "2025-01-01", "2025-01-31")   # → str | 
 | Variable | Required | Default | Controls |
 |----------|----------|---------|----------|
 | `SRF_API_KEY` | **yes** | — (rc 2) | SRF platform API key (Bearer token) |
-| `JOLT_CONFIG_DIR` | recommended | the vendored `configs/` | directory of the three config JSONs **and** the capacity-ledger write target |
+| `JOLT_CAPACITY_LEDGER` | recommended | — (the ledger lives in `vehicles.json`) | path of the capacity-ledger JSON file; when set, `vehicles.json` is never written |
+| `JOLT_CONFIG_DIR` | no | the vendored `configs/` | directory of the two config JSONs (`vehicles.json`, `pipelines.json`); also the capacity-ledger write target when `JOLT_CAPACITY_LEDGER` is unset |
 | `JOLT_CACHE_DIR` | recommended | `./cache` (CWD-relative) | cache root |
 | `SRF_API_ROOT` | no | `https://data.csrf.ac.uk/api/` | SRF REST root |
 | `OPENWEATHER_API_KEYS` | no | — (weather post-step patches nothing) | comma-separated OpenWeather keys |
@@ -61,22 +63,60 @@ The CLI loads a `.env` from the working directory if present (`python-dotenv`,
 environment. Inject secrets through the platform's secret manager; nothing containing
 a key is logged.
 
+The package loads the vehicle configs (and fixes the postcode-cache path) when it is
+first imported, which for `python -m report_generator.cli` is before `.env` is read.
+Export `JOLT_CONFIG_DIR` and `JOLT_CACHE_DIR` in the process environment rather than
+relying on `.env` for them. `JOLT_CAPACITY_LEDGER` works from either: the CLI re-applies
+the ledger once `.env` is loaded. From the Python API, set all three before
+`import report_generator`.
+
 ## Writable state — the capacity ledger
 
-`configs/vehicles.json` is not purely static: after each EV report the generator writes
-that vehicle's measured battery capacity back into it (`effective_capacity_kwh` plus the
-`effective_capacity_quarterly` ledger). **Copy `configs/` to a writable location and
-point `JOLT_CONFIG_DIR` at it.**
+After each EV report the generator writes that vehicle's measured battery capacity back
+(`effective_capacity_kwh` plus the per-period `effective_capacity_quarterly` history —
+together, the capacity ledger), and the vehicle's next report reads it back. It is
+state that must persist between runs, and it has two possible homes:
 
-- The write-back is guarded by a `filelock.FileLock` on `vehicles.json.lock`, and only
-  ever adds/updates capacity fields from `charge`/`discharge` donor segments — fallback
-  values are never written.
+| Mode | Set | The ledger is read from and written to | `vehicles.json` |
+|------|-----|-----------------------------------------|-----------------|
+| **External ledger** (recommended) | `JOLT_CAPACITY_LEDGER=/state/capacity_ledger.json` | that file, created on the first write | read only, never written |
+| In-config (default) | nothing, or `JOLT_CONFIG_DIR` | `vehicles.json` itself | rewritten after every EV report |
+
+**Recommended deployment**: keep `report_generator/configs/` exactly as shipped —
+read-only is fine — and point `JOLT_CAPACITY_LEDGER` at a file on a persistent,
+writable volume. The tuned parameters then change only through a reviewed update of
+this code, and the machine-written state lives apart from them. `JOLT_CONFIG_DIR` is
+only needed to run with your own copy of `vehicles.json` / `pipelines.json`.
+
+- **The ledger file** is a JSON object, one entry per registration:
+  `{"<REG>": {"effective_capacity_kwh": <float>, "effective_capacity_quarterly":
+  {"<YYYYMMDD_YYYYMMDD>": {"kwh": <float>, "n": <int>}}}}`. It is overlaid on
+  `vehicles.json` whenever the configs are loaded
+  (`report_generator.configs.load_vehicle_configs()`): for a registration in both, a
+  key the ledger entry carries replaces the `vehicles.json` value, and a key it does
+  not carry keeps it; a registration only in the ledger is ignored; a ledger file that
+  does not exist yet means no overlay. A file that is not such an object fails loudly
+  instead of being read as empty and overwritten.
+- **Starting a ledger.** An empty (or absent) ledger works: a vehicle's first
+  write-back seeds its entry from the values in `vehicles.json`, so its capacity history
+  continues rather than restarting. To start from a known state instead, write the two
+  keys of every vehicle, taken from the `vehicles.json` you run with, into the file —
+  the reports are then exactly what they would be without the external ledger.
+- The write-back is guarded by a `filelock.FileLock` on `<ledger>.lock` (in the
+  default mode, `vehicles.json.lock`), and only ever adds/updates capacity fields from
+  `charge`/`discharge` donor segments — fallback values are never written. Only a
+  vehicle that is in `vehicles.json` ever gets an entry.
 - **One generation per vehicle at a time.** Two concurrent runs of the *same* vehicle
   race on its ledger entry (last writer wins) and duplicate SRF fetches. Different
   vehicles in parallel are safe: separate ledger keys, shared read-only caches, one SRF
   client per `JOLTReportGenerator` instance.
-- A read-only config directory is supported — the write-back no-ops with a logged
-  warning and reports fall back to `srf_capacity_kwh`.
+- **The write target must be writable.** A write-back that cannot write — including the
+  lock file beside it — raises, and that report is not written. A read-only config
+  directory therefore needs the external ledger.
+- `python -m report_generator.capacity_backfill --report-db <dir>` rebuilds the ledger
+  from finished reports, into whichever of the two homes is active; with `--dry-run` it
+  prints the result and writes neither `vehicles.json` nor the ledger (in the external
+  mode it does not even create the ledger's lock file or directory).
 
 ## Caches
 

@@ -9,12 +9,13 @@
 > Newest at the bottom. The current architecture is documented in
 > [architecture.md](architecture.md); this file is history only.
 >
-> Two notes on reading it. The entries are the upstream record kept **verbatim**, so
-> a section may name a path (`src/jolt_toolkit/…`, a data tree, a sibling tool) that
-> belongs to the JOLT research project this repository was extracted from — the
-> statement was true of the release it describes. And `__version__` tracks that
-> upstream code revision, not this repository's layout: moving the package to the
-> root is recorded in git, not as a release here.
+> Two notes on reading it. The entries up to and including 3.5.1 are the upstream
+> record kept **verbatim**, so a section may name a path (`src/jolt_toolkit/…`, a data
+> tree, a sibling tool) that belongs to the JOLT research project this repository was
+> extracted from — the statement was true of the release it describes. From 3.6.0 the
+> code is developed in this repository and its sections are written here. And
+> `__version__` numbers code revisions, not this repository's layout: moving the
+> package to the root is recorded in git, not as a release here.
 
 ## 1.0.0 — initial report generator
 
@@ -594,3 +595,81 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   explicit call), and over the stationary-sample filter under a renamed column.
   Full suite: **371 passed, 3 skipped** (3.5.0 baseline on this worktree: 350
   passed, 3 skipped).
+
+## 3.6.0 — external capacity-ledger file (`JOLT_CAPACITY_LEDGER`)
+
+- **Data namespace: unchanged, still `3.3.0/`.** No reported cell can change, for two
+  independent reasons.
+  1. *Without the variable nothing changes.* `VEHICLE_CONFIG` is exactly the parsed
+     `vehicles.json`, and the write-back and the backfill write `vehicles.json` byte for
+     byte as before. Proven by driving the same sequence — a new period, a sparse period,
+     the same period again, a no-donor call, a registration not in the file, a backfill
+     dry run and a real backfill — through the 3.5.1 code and through this release on a
+     copy of the shipped `vehicles.json`: the file and the in-memory entries have
+     identical SHA-256 digests after every step.
+  2. *With the variable set, a ledger extracted from the same `vehicles.json` gives the
+     same numbers.* The overlaid configuration equals the file's own values, and the same
+     sequence leaves the ledger holding exactly the entries the unset run wrote into
+     `vehicles.json`, while `vehicles.json` stays byte-identical. The only report input
+     the ledger supplies — `effective_capacity_kwh`, the capacity seed — is therefore
+     the same number either way.
+- **Why.** The capacity ledger (`effective_capacity_kwh` + `effective_capacity_quarterly`)
+  is machine-written state, rewritten after every EV report, while everything else in
+  `vehicles.json` is reviewed, tuned parameters. Keeping both in one file meant every
+  report run dirtied the checkout of the code it ran from, and a parameter review could
+  not tell the two apart. The variable moves the state into a file of its own.
+- **New public loaders in `report_generator.configs`** — the way to read the configs,
+  never by file path: `get_capacity_ledger_path() -> Path | None` (the variable, read at
+  call time; unset, empty or blank means none), `load_vehicle_configs() -> dict` (a fresh
+  read of `vehicles.json` with the ledger overlaid) and `load_pipeline_configs() -> dict`,
+  plus the constants `CAPACITY_LEDGER_ENV_VAR` and `LEDGER_KEYS`.
+  `segmentation.constants` builds `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` through them —
+  still the single load site, still shared by reference; `constants._load_json` is kept
+  and now delegates.
+- **Ledger file.** `{REG: {"effective_capacity_kwh": float, "effective_capacity_quarterly":
+  {period_key: {"kwh": float, "n": int}}}}`; only those two keys are read. For a
+  registration in both files each ledger key the entry carries replaces the config value
+  (a key it does not carry keeps it), a registration only in the ledger is ignored, and a
+  file that does not exist yet means no overlay. A blank file reads as empty; any other
+  content that is not such an object raises `ValueError`, so a damaged ledger is never
+  read as empty and then overwritten. Reads take the ledger lock, falling back to an
+  unlocked read only where the lock file cannot be created at all.
+- **Write-back** (`capacity._persist_effective_capacity`): with the variable set it writes
+  the ledger under `<ledger>.lock`, creating the file and its directory on the first
+  write, and only reads `vehicles.json` — for the unchanged membership rule that only a
+  vehicle in `vehicles.json` ever gets an entry. A vehicle without a ledger entry yet is
+  seeded from its in-memory `VEHICLE_CONFIG` values (the `vehicles.json` entry when it is
+  absent from memory), so switching a deployment over continues each vehicle's capacity
+  history instead of restarting it. Both targets share one merge function
+  (`_merge_period_capacity`).
+- **Backfill** (`capacity_backfill`): with the variable set, the rebuilt entries are
+  written into the ledger — exactly the entries the `vehicles.json` path would have
+  rewritten — every other ledger entry is kept, and `vehicles.json` is only read. The
+  summaries start from the ledger values. `--dry-run` writes nothing at all in this
+  mode, not even the lock file or the ledger's directory.
+- **The CLI honours a ledger named in `.env`.** `python -m report_generator.cli` imports
+  the package — building `VEHICLE_CONFIG` — before `main()` loads `.env`, so a
+  `JOLT_CAPACITY_LEDGER` set only there would have been written by the write-back
+  without ever being read. `main()` now overlays the ledger onto the shared in-memory
+  configs once `.env` is loaded (idempotent if it was already set at import; a no-op
+  without the variable). The same import-order limit applies, unchanged, to
+  `JOLT_CONFIG_DIR` and to the postcode-cache path under `JOLT_CACHE_DIR`;
+  `deployment.md` now says to export those rather than rely on `.env`.
+- **Documentation correction.** `deployment.md` said a read-only config directory makes
+  the write-back no-op with a warning. It does not: the write-back raises
+  `PermissionError` — on the lock file or on `vehicles.json` — before the report is
+  written (reproduced on 3.5.1 and on this release with a read-only `vehicles.json`).
+  The behaviour is unchanged, as the unset path must be; the deployment contract now
+  says so and recommends the external ledger for a read-only config directory.
+- **Test suite.** The session conftest removes `JOLT_CAPACITY_LEDGER` at import, since a
+  value inherited from the developer's shell would both change what the suite reads and
+  let a test write into a real ledger. New: 19 unit tests of the loaders and the overlay
+  semantics (both keys, a partial entry, an uncovered vehicle, a ledger-only
+  registration, a missing / blank / damaged file, and the import-time overlay in a fresh
+  interpreter) and 23 integration tests of the write side (ledger written and
+  `vehicles.json` untouched, the lock, seeding from memory and from the file, merging
+  into an existing entry, the membership rule, the no-donor no-op, backfill into the
+  ledger, the dry run, and both targets producing the same entry, byte-for-byte for the
+  unset path), plus 2 CLI tests (a ledger named only in `.env` is read before the
+  generator is built; without the variable the configs are left alone). Full suite:
+  **1079 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).

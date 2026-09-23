@@ -208,3 +208,62 @@ def test_main_returns_3_for_a_vehicle_that_does_not_exist_on_srf(captured_genera
     _, instance = captured_generator
     instance.generate_report.side_effect = VehicleNotFoundError("nope")
     assert cli.main(BASE_ARGS) == 3
+
+
+# ── main(): the capacity ledger named in .env ────────────────────────────────
+
+
+def test_main_reads_a_capacity_ledger_named_only_in_dotenv(
+    captured_generator, monkeypatch, tmp_path
+):
+    """The ledger must be read before the generator is built, not only written.
+
+    ``python -m report_generator.cli`` imports the package — and so builds
+    ``VEHICLE_CONFIG`` — before ``main`` loads ``.env``; a ledger named there must
+    still be overlaid on the in-memory configs the report is generated from.
+    """
+    import json
+    import os
+
+    from report_generator.segmentation import constants
+
+    ledger = tmp_path / "capacity_ledger.json"
+    ledger.write_text(
+        json.dumps({"EVSPD01": {"effective_capacity_kwh": 432.1}}), encoding="utf-8"
+    )
+    monkeypatch.setitem(
+        constants.VEHICLE_CONFIG,
+        "EVSPD01",
+        {"srf_reg": "EVSPD01", "effective_capacity_kwh": 360.6},
+    )
+    monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
+
+    def load_dotenv(*_args, **_kwargs):  # what a .env line would do
+        os.environ["JOLT_CAPACITY_LEDGER"] = str(ledger)
+        return True
+
+    monkeypatch.setattr("dotenv.load_dotenv", load_dotenv)
+    factory, instance = captured_generator
+    seen = {}
+
+    def build(**_kwargs):
+        seen["kwh"] = constants.VEHICLE_CONFIG["EVSPD01"]["effective_capacity_kwh"]
+        return instance
+
+    factory.side_effect = build
+    assert cli.main(BASE_ARGS) == 0
+    assert seen["kwh"] == 432.1
+
+
+def test_main_without_a_capacity_ledger_leaves_the_configs_alone(
+    captured_generator, monkeypatch
+):
+    import copy
+
+    from report_generator.segmentation import constants
+
+    monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_a, **_k: False)
+    before = copy.deepcopy(dict(constants.VEHICLE_CONFIG))
+    assert cli.main(BASE_ARGS) == 0
+    assert dict(constants.VEHICLE_CONFIG) == before

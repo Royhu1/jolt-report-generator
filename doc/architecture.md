@@ -98,9 +98,9 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 ├── excel_writer.py                # _write_na, _write_excel_report (report/graphs/definitions sheets)
 ├── report_builder.py              # FACADE re-exporting the four modules above (flat import path)
 ├── segment_algorithms.py          # FACADE re-exporting the whole segmentation/ surface (flat import path)
-├── configs/                       # shared config (accessed via get_config_path(); JOLT_CONFIG_DIR override)
-│   ├── __init__.py                # get_config_path() — honours env JOLT_CONFIG_DIR, else this directory
-│   ├── vehicles.json              # per-vehicle parameters + the effective-capacity ledger (written back)
+├── configs/                       # shared config (JOLT_CONFIG_DIR override; external ledger via JOLT_CAPACITY_LEDGER)
+│   ├── __init__.py                # get_config_path() / get_capacity_ledger_path() + the public loaders load_vehicle_configs() (ledger overlaid) / load_pipeline_configs()
+│   ├── vehicles.json              # per-vehicle parameters + the effective-capacity ledger (written back unless JOLT_CAPACITY_LEDGER is set)
 │   └── pipelines.json             # named segmentation parameter sets
 ├── segmentation/                  # unified charge/discharge segmentation sub-package (EV path)
 │   ├── constants.py               # column-name constants + THE single VEHICLE_CONFIG / PIPELINE_CONFIGS load
@@ -225,7 +225,8 @@ repo-root run:
 |----------|---------|---------|
 | `SRF_API_KEY` | SRF platform API key (required to fetch) | — (CLI fails fast, rc 2) |
 | `OPENWEATHER_API_KEYS` | comma-separated OpenWeather keys (weather post-step only) | — (weather skipped) |
-| `JOLT_CONFIG_DIR` | directory holding `vehicles.json` + `pipelines.json`; **also where the capacity ledger is written back** | the vendored `configs/` dir |
+| `JOLT_CONFIG_DIR` | directory holding `vehicles.json` + `pipelines.json`; also where the capacity ledger is written back when `JOLT_CAPACITY_LEDGER` is unset | the vendored `configs/` dir |
+| `JOLT_CAPACITY_LEDGER` | path of an external capacity-ledger JSON file: the ledger keys are overlaid from it at load and written back to it, and `vehicles.json` is never written | — (ledger kept in `vehicles.json`) |
 | `JOLT_CACHE_DIR` | cache root (`srf_http/`, `srf_raw/`, weather, postcode) | `./cache` |
 | `SRF_API_ROOT` | SRF REST API root | `https://data.csrf.ac.uk/api/` |
 | `WEATHER_CACHE_FILE` / `WEATHER_CACHE_FILE_FINE` | override the coarse / fine weather cache file paths | `<cache>/.weather_cache.json` / `<cache>/weather/.weather_cache_fine.json` |
@@ -238,7 +239,24 @@ to an empty config.
 
 `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` are loaded **once** in `segmentation/constants.py`
 and shared by reference across the package (a single load site; object identity is a
-maintained invariant — see the import test).
+maintained invariant — see the import test). They are built through the public loaders
+in `report_generator.configs`, which are also the way any consumer outside the package
+should read the configs — never by file path:
+
+| Loader | Returns |
+|--------|---------|
+| `load_vehicle_configs()` | a fresh read of `vehicles.json` with the capacity ledger overlaid when `JOLT_CAPACITY_LEDGER` is set (without it: exactly the parsed file) |
+| `load_pipeline_configs()` | a fresh read of `pipelines.json` |
+| `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
+| `get_config_path(name)` | the path of a config file in the active directory |
+
+`vehicles.json` holds two kinds of data. The **parameters** (everything below except
+the two ledger keys) are reviewed, tuned values that change only through a reviewed
+edit. The **capacity ledger** (`effective_capacity_kwh` + `effective_capacity_quarterly`,
+`configs.LEDGER_KEYS`) is machine-written state. With `JOLT_CAPACITY_LEDGER` set the
+ledger lives in its own file — overlaid key by key on the registrations present in both,
+a ledger-only registration ignored — and the write-back and the backfill write that file
+instead of `vehicles.json`.
 
 ### `configs/vehicles.json`
 
@@ -249,8 +267,8 @@ Each vehicle entry:
 | `srf_reg` | `str` | **required** — registration in the SRF API (e.g. `"KY24 LHT"`) |
 | `nominal_kwh` | `float` | manufacturer nominal battery capacity (kWh); sets the effective-capacity validity range (`nominal × 0.5 … 2.0`) |
 | `srf_capacity_kwh` | `float` | SRF-registered capacity (API `fuel_capacity`); ultimate fallback for effective capacity + SOC estimate |
-| `effective_capacity_kwh` | `float\|null` | donor-count-weighted average over all reliable periods of `effective_capacity_quarterly` (`Σ(kwh·n)/Σn`, reliable = `n ≥ MIN_DONORS`); maintained by `_persist_effective_capacity()` / `capacity_backfill` |
-| `effective_capacity_quarterly` | `dict\|absent` (EV) | per-period ledger `{"YYYYMMDD_YYYYMMDD": {"kwh", "n"}}`; `n` = donor count. Sparse periods (`n < MIN_DONORS`=5) are excluded from the average and their `kwh` back-filled to it |
+| `effective_capacity_kwh` | `float\|null` | **ledger key**: donor-count-weighted average over all reliable periods of `effective_capacity_quarterly` (`Σ(kwh·n)/Σn`, reliable = `n ≥ MIN_DONORS`); maintained by `_persist_effective_capacity()` / `capacity_backfill` — here, or in the `JOLT_CAPACITY_LEDGER` file, which then overrides it |
+| `effective_capacity_quarterly` | `dict\|absent` (EV) | **ledger key**: per-period ledger `{"YYYYMMDD_YYYYMMDD": {"kwh", "n"}}`; `n` = donor count. Sparse periods (`n < MIN_DONORS`=5) are excluded from the average and their `kwh` back-filled to it |
 | `soc_energy_fallback` | `bool` (optional, EV) | opt-in: in the ±1σ step-2 outlier pass, re-derive a counter-sourced outlier's energy from ΔSOC×capacity when the dual-gate fires (see capacity model). Off by default |
 | `make` / `model` | `str` | manufacturer / model. `model` mirrors the SRF platform string by default — see the note below the table for the rule and its deliberate exceptions |
 | `description` | `str\|null` | the SRF platform's own free-text vehicle description, copied verbatim from the API (e.g. `"2024 Volvo artic"`); display / provenance only — no code branches on it. `null` where SRF has none |
@@ -377,11 +395,16 @@ donor capacity `(kwh, n)` — from `_period_capacity_from_rows()` on the correct
 **before** Stop insertion — is merged into `effective_capacity_quarterly[period_key]`,
 then `effective_capacity_kwh` is recomputed as the donor-count-weighted average over
 reliable periods (`_recompute_weighted_capacity()`). Written only when the source is a
-`charge`/`discharge` donor (never a fallback), guarded by a `filelock.FileLock` so
-parallel runs cannot clobber. `capacity_backfill` reproduces the identical ledger from
-existing xlsx without re-running (it reads the `Battery Capacity`/`SOC Change`/`Energy
-Source` columns; the `=NA()` Stop cells read back as 0 and are dropped by the donor
-guard).
+`charge`/`discharge` donor (never a fallback) and only for a vehicle that is in
+`vehicles.json`, guarded by a `filelock.FileLock` so parallel runs cannot clobber. The
+target is `vehicles.json`, or the `JOLT_CAPACITY_LEDGER` file when that is set (read at
+call time); both targets share one merge function, so they cannot compute different
+numbers. A vehicle's first write into an external ledger seeds its entry from the
+in-memory `VEHICLE_CONFIG` values, so its capacity history continues. `capacity_backfill`
+reproduces the identical ledger from existing xlsx without re-running (it reads the
+`Battery Capacity`/`SOC Change`/`Energy Source` columns; the `=NA()` Stop cells read back
+as 0 and are dropped by the donor guard), into the same target; `--dry-run` writes
+nothing.
 
 ### `configs/pipelines.json`
 

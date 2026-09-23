@@ -69,7 +69,7 @@ dropped into your environment's `site-packages`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # ~45 s, ~1040 tests, fully offline
+pytest                     # ~45 s, ~1080 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network and no writable state outside the temp directory:
@@ -97,8 +97,13 @@ what degrades.
 
 Read **[doc/deployment.md](doc/deployment.md)**. The points most likely to bite:
 
-- **Writable state** — the effective-capacity ledger is persisted back into
-  `configs/vehicles.json`. Point `JOLT_CONFIG_DIR` at a writable copy of `configs/`.
+- **Writable state** — every EV report writes the vehicle's effective-capacity ledger
+  back. **Recommended:** set `JOLT_CAPACITY_LEDGER` to a file on a persistent, writable
+  volume — the ledger (machine-written state) then lives in that file, and
+  `configs/vehicles.json` stays what it is meant to be, reviewed tuned parameters,
+  read-only and never written. The alternative is the default: without the variable
+  the ledger is written back into `configs/vehicles.json`, so point `JOLT_CONFIG_DIR` at
+  a writable copy of `configs/`.
 - **Caches** — set `JOLT_CACHE_DIR` to a persistent volume; the SRF raw-data cache makes
   re-runs dramatically cheaper, and the weather cache protects a paid API quota.
 - **No paid API calls by default** — report generation uses the SRF logger's own weather

@@ -1,10 +1,16 @@
 """Deployment-time path resolution and config loading.
 
-These four helpers are the whole "where does state live" contract a deployer
-configures: ``JOLT_CACHE_DIR``, ``SRF_API_ROOT`` and ``JOLT_CONFIG_DIR``. Every
-one must be read at CALL time (not import time) so a process can be reconfigured,
-and a missing config file must fail with an actionable message rather than an
-empty ``VEHICLE_CONFIG`` surfacing much later as "vehicle not registered".
+These helpers are the whole "where does state live" contract a deployer
+configures: ``JOLT_CACHE_DIR``, ``SRF_API_ROOT``, ``JOLT_CONFIG_DIR`` and
+``JOLT_CAPACITY_LEDGER``. Every one must be read at CALL time (not import time)
+so a process can be reconfigured, and a missing config file must fail with an
+actionable message rather than an empty ``VEHICLE_CONFIG`` surfacing much later
+as "vehicle not registered".
+
+The public loaders (``load_vehicle_configs`` / ``load_pipeline_configs``) are
+what every consumer reads the configs through, so their overlay semantics are
+pinned here on small synthetic files; the write side of the external ledger is
+in ``integration/test_capacity_ledger_file.py``.
 """
 
 from __future__ import annotations
@@ -133,3 +139,231 @@ def test_frozen_config_injection_is_visible_everywhere(frozen_configs):
     assert "evspd01_speed" in segment_algorithms.PIPELINE_CONFIGS
     # ... and the live fleet entries are still there (setitem, not replace).
     assert len(segment_algorithms.VEHICLE_CONFIG) > len(frozen_configs["vehicles"])
+
+
+# ── get_capacity_ledger_path ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_there_is_no_external_ledger_without_the_variable(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
+    else:
+        monkeypatch.setenv("JOLT_CAPACITY_LEDGER", value)
+    assert configs.get_capacity_ledger_path() is None
+
+
+def test_the_ledger_path_is_read_at_call_time(monkeypatch, tmp_path):
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(tmp_path / "a.json"))
+    assert configs.get_capacity_ledger_path() == tmp_path / "a.json"
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(tmp_path / "b.json"))
+    assert configs.get_capacity_ledger_path() == tmp_path / "b.json"
+
+
+def test_the_ledger_contract_constants():
+    assert configs.CAPACITY_LEDGER_ENV_VAR == "JOLT_CAPACITY_LEDGER"
+    assert configs.LEDGER_KEYS == (
+        "effective_capacity_kwh",
+        "effective_capacity_quarterly",
+    )
+
+
+# ── load_vehicle_configs / load_pipeline_configs ─────────────────────────────
+
+_Q1 = {"20250101_20250401": {"kwh": 350.0, "n": 10}}
+_VEHICLES = {
+    "UTVEH01": {
+        "srf_reg": "UTVEH01",
+        "nominal_kwh": 540,
+        "effective_capacity_kwh": 350.0,
+        "effective_capacity_quarterly": _Q1,
+        "pipeline": "ut_speed",
+    },
+    "UTVEH02": {"srf_reg": "UTVEH02", "effective_capacity_kwh": 200.0},
+}
+_PIPELINES = {"ut_speed": {"branch": "speed"}}
+
+
+@pytest.fixture
+def synthetic_config_dir(monkeypatch, tmp_path):
+    """A config directory holding a two-vehicle vehicles.json + pipelines.json."""
+    cfg = tmp_path / "configs"
+    cfg.mkdir()
+    (cfg / "vehicles.json").write_text(json.dumps(_VEHICLES, indent=2), "utf-8")
+    (cfg / "pipelines.json").write_text(json.dumps(_PIPELINES), "utf-8")
+    monkeypatch.setenv("JOLT_CONFIG_DIR", str(cfg))
+    monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
+    return cfg
+
+
+def _use_ledger(monkeypatch, tmp_path, payload=None, text=None):
+    """Point JOLT_CAPACITY_LEDGER at a ledger file, written unless both are None."""
+    path = tmp_path / "state" / "capacity_ledger.json"
+    if payload is not None or text is not None:
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text if text is not None else json.dumps(payload), "utf-8")
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(path))
+    return path
+
+
+def test_without_a_ledger_the_vehicle_configs_are_the_file_as_parsed(
+    synthetic_config_dir,
+):
+    loaded = configs.load_vehicle_configs()
+    assert loaded == _VEHICLES
+    assert list(loaded) == list(_VEHICLES)  # the key order too
+
+
+def test_the_pipeline_configs_are_the_file_as_parsed(synthetic_config_dir):
+    assert configs.load_pipeline_configs() == _PIPELINES
+
+
+def test_every_load_is_a_fresh_read(synthetic_config_dir):
+    first = configs.load_vehicle_configs()
+    first["UTVEH01"]["nominal_kwh"] = 1  # a caller mutating its result ...
+    # ... never reaches the next caller.
+    assert configs.load_vehicle_configs()["UTVEH01"]["nominal_kwh"] == 540
+
+
+def test_the_ledger_replaces_both_ledger_keys(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    q2 = {"20250401_20250701": {"kwh": 400.0, "n": 20}}
+    _use_ledger(
+        monkeypatch,
+        tmp_path,
+        {
+            "UTVEH01": {
+                "effective_capacity_kwh": 400.0,
+                "effective_capacity_quarterly": q2,
+            }
+        },
+    )
+    entry = configs.load_vehicle_configs()["UTVEH01"]
+    assert entry["effective_capacity_kwh"] == 400.0
+    # Replaced, not merged: once the ledger holds a history it is the history.
+    assert entry["effective_capacity_quarterly"] == q2
+    # Parameters are never touched by the overlay.
+    assert (entry["nominal_kwh"], entry["pipeline"]) == (540, "ut_speed")
+
+
+def test_a_key_the_ledger_entry_lacks_keeps_the_config_value(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    _use_ledger(monkeypatch, tmp_path, {"UTVEH01": {"effective_capacity_kwh": 410.0}})
+    entry = configs.load_vehicle_configs()["UTVEH01"]
+    assert entry["effective_capacity_kwh"] == 410.0
+    assert entry["effective_capacity_quarterly"] == _Q1
+
+
+def test_a_vehicle_the_ledger_does_not_cover_keeps_its_config_values(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    _use_ledger(monkeypatch, tmp_path, {"UTVEH01": {"effective_capacity_kwh": 410.0}})
+    assert configs.load_vehicle_configs()["UTVEH02"] == _VEHICLES["UTVEH02"]
+
+
+def test_a_ledger_only_registration_is_ignored(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    # The ledger records state for configured vehicles; it cannot configure one.
+    _use_ledger(monkeypatch, tmp_path, {"NOTAVEH": {"effective_capacity_kwh": 123.0}})
+    loaded = configs.load_vehicle_configs()
+    assert "NOTAVEH" not in loaded
+    assert loaded == _VEHICLES
+
+
+def test_only_the_two_ledger_keys_are_overlaid(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    _use_ledger(
+        monkeypatch,
+        tmp_path,
+        {
+            "UTVEH01": {
+                "nominal_kwh": 1,
+                "pipeline": "not_a_pipeline",
+                "effective_capacity_kwh": 400.0,
+            }
+        },
+    )
+    entry = configs.load_vehicle_configs()["UTVEH01"]
+    assert (entry["nominal_kwh"], entry["pipeline"]) == (540, "ut_speed")
+    assert entry["effective_capacity_kwh"] == 400.0
+
+
+def test_a_ledger_file_that_does_not_exist_yet_means_no_overlay(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    path = _use_ledger(monkeypatch, tmp_path)
+    assert configs.load_vehicle_configs() == _VEHICLES
+    # Reading never creates the ledger, its lock file or its directory.
+    assert not path.parent.exists()
+
+
+def test_a_blank_ledger_file_means_no_overlay(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    _use_ledger(monkeypatch, tmp_path, text="  \n")
+    assert configs.load_vehicle_configs() == _VEHICLES
+
+
+@pytest.mark.parametrize("text", ["[]", '{"UTVEH01": 400.0}', "{not json"])
+def test_a_damaged_ledger_fails_loudly(
+    synthetic_config_dir, monkeypatch, tmp_path, text
+):
+    # Never read as empty: a write-back would then overwrite what is there.
+    _use_ledger(monkeypatch, tmp_path, text=text)
+    with pytest.raises(ValueError):
+        configs.load_vehicle_configs()
+
+
+def test_the_import_time_vehicle_config_goes_through_the_public_loader(tmp_path):
+    """``segmentation.constants`` builds ``VEHICLE_CONFIG`` with the overlay applied.
+
+    Run in a fresh interpreter: this session's ``VEHICLE_CONFIG`` was built once,
+    at import, with the ledger variable removed by the conftest, and it is shared
+    by reference across the package, so it must not be rebuilt here.
+    """
+    import os
+    import subprocess
+    import sys
+
+    cfg = tmp_path / "configs"
+    cfg.mkdir()
+    (cfg / "vehicles.json").write_text(json.dumps(_VEHICLES), "utf-8")
+    (cfg / "pipelines.json").write_text(json.dumps(_PIPELINES), "utf-8")
+    ledger = tmp_path / "capacity_ledger.json"
+    ledger.write_text(
+        json.dumps({"UTVEH01": {"effective_capacity_kwh": 432.1}}), "utf-8"
+    )
+    repo_root = str(Path(__file__).resolve().parents[2])
+    env = dict(os.environ)
+    env.update(
+        PYTHONPATH=repo_root + os.pathsep + env.get("PYTHONPATH", ""),
+        PYTHONUTF8="1",
+        JOLT_CONFIG_DIR=str(cfg),
+        JOLT_CAPACITY_LEDGER=str(ledger),
+        JOLT_CACHE_DIR=str(tmp_path / "cache"),
+    )
+    code = (
+        "import json\n"
+        "from report_generator.segmentation import constants as c\n"
+        "v = c.VEHICLE_CONFIG\n"
+        "print(json.dumps([v['UTVEH01']['effective_capacity_kwh'],\n"
+        "                  v['UTVEH02']['effective_capacity_kwh'],\n"
+        "                  sorted(c.PIPELINE_CONFIGS)]))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip().splitlines()[-1]) == [
+        432.1,
+        200.0,
+        ["ut_speed"],
+    ]

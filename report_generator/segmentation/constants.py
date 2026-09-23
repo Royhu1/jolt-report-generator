@@ -46,29 +46,27 @@ _ANCHOR_PRIVATE_KEYS: frozenset = frozenset(
 )
 
 # ── Config loading (from JSON files) ─────────────────────────────────────────
-import json as _json
-
-from report_generator.configs import get_config_path as _get_config_path
+from report_generator.configs import (
+    _load_config_json,
+    load_pipeline_configs,
+    load_vehicle_configs,
+)
 
 
 def _load_json(name: str) -> dict:
-    """Load a JSON config file from the active config directory.
+    """Load a JSON config file from the active config directory, as parsed.
 
     Raises ``FileNotFoundError`` with an actionable message when the file is
-    missing (previously returned ``{}`` silently, which surfaced much later as
-    an empty ``VEHICLE_CONFIG`` and a cryptic 'vehicle not registered' error).
+    missing, rather than returning ``{}`` and surfacing much later as an empty
+    ``VEHICLE_CONFIG`` and a cryptic 'vehicle not registered' error. The raw
+    file content: unlike :func:`~report_generator.configs.load_vehicle_configs`
+    it applies no capacity-ledger overlay.
     """
-    path = _get_config_path(name)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Config file '{name}' not found at {path}. Either the vendored "
-            f"report_generator/configs/ directory is incomplete, or "
-            f"JOLT_CONFIG_DIR points at a directory that does not hold "
-            f"vehicles.json and pipelines.json."
-        )
-    with open(path, "r", encoding="utf-8") as f:
-        return _json.load(f)
+    return _load_config_json(name)
 
 
-VEHICLE_CONFIG: dict[str, dict[str, Any]] = _load_json("vehicles.json")
-PIPELINE_CONFIGS: dict[str, dict] = _load_json("pipelines.json")
+# The single load site. ``load_vehicle_configs`` overlays the external capacity
+# ledger (``JOLT_CAPACITY_LEDGER``) when one is configured; without it the
+# result is exactly the parsed ``vehicles.json``.
+VEHICLE_CONFIG: dict[str, dict[str, Any]] = load_vehicle_configs()
+PIPELINE_CONFIGS: dict[str, dict] = load_pipeline_configs()

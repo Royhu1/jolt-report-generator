@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~45 s, 1039 tests, fully offline
+pytest                       # ~45 s, 1083 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -33,8 +33,8 @@ The five contract files directly under `tests/` predate this suite.
 | Area | Tests |
 |------|-------|
 | Existing contract suite (`tests/*.py`) | 254 |
-| `unit/` | 560 |
-| `integration/` | 225 |
+| `unit/` | 581 |
+| `integration/` | 248 |
 
 ## The offline guarantee
 
@@ -47,7 +47,9 @@ Four things enforce it, all in the top-level `tests/conftest.py`:
    Setting the variable later would be too late. The directory is a `mkdtemp` and
    is removed in `pytest_sessionfinish`.
 2. **`SRF_API_KEY` / `OPENWEATHER_API_KEYS` are forced empty**, so nothing can
-   silently authenticate.
+   silently authenticate, and **`JOLT_CAPACITY_LEDGER` is removed**, so a ledger
+   named in the developer's shell is neither overlaid on the configs the suite reads
+   nor written by a test. Tests of the external ledger set it on `tmp_path`.
 3. **Outbound sockets are blocked** for the whole session (`socket.connect` and
    `socket.create_connection` raise `NetworkAccessAttempted`). A test that needs
    remote data must inject a `Mock` instead.

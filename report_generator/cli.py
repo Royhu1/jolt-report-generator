@@ -7,6 +7,8 @@ exit code (0 success / 2 bad invocation or missing key / 3 unknown vehicle).
 Environment (loaded from a ``.env`` in the working directory if present):
   SRF_API_KEY          required — SRF platform API key
   OPENWEATHER_API_KEYS optional — weather patching (post-generation step)
+  JOLT_CAPACITY_LEDGER optional — external capacity-ledger file (recommended:
+                       vehicles.json is then never written)
   JOLT_CONFIG_DIR      optional — override the config directory (writable)
   JOLT_CACHE_DIR       optional — override the cache root (default ./cache)
   SRF_API_ROOT         optional — override the SRF API root
@@ -70,6 +72,31 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_capacity_ledger() -> None:
+    """Overlay the external capacity ledger onto the in-memory vehicle configs.
+
+    ``VEHICLE_CONFIG`` is built when the package is first imported, which for
+    ``python -m report_generator.cli`` happens before :func:`main` loads the
+    ``.env``. A ``JOLT_CAPACITY_LEDGER`` named only in ``.env`` would otherwise be
+    written by the capacity write-back without ever having been read, so it is
+    overlaid here, in place (the dict is shared by reference). Idempotent when the
+    variable was already set at import; a no-op when it is not set at all.
+    """
+    from report_generator.configs import (
+        _overlay_capacity_ledger,
+        _read_capacity_ledger,
+        get_capacity_ledger_path,
+    )
+
+    ledger_path = get_capacity_ledger_path()
+    if ledger_path is None:
+        return
+    from report_generator.segmentation.constants import VEHICLE_CONFIG
+
+    _overlay_capacity_ledger(VEHICLE_CONFIG, _read_capacity_ledger(ledger_path))
+    logger.info("Capacity ledger: %s", ledger_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -109,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         logger.error("Missing required argument(s): %s", ", ".join(missing))
         return 2
+
+    _apply_capacity_ledger()
 
     from report_generator import DATA_NAMESPACE, __version__
     from report_generator._generator import JOLTReportGenerator
