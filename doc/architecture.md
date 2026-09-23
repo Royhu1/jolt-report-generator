@@ -412,7 +412,11 @@ target is `vehicles.json`, or the `JOLT_CAPACITY_LEDGER` file when that is set (
 call time); both targets share one merge function, so they cannot compute different
 numbers. A write into an external ledger merges into exactly what the reports read:
 each ledger key the vehicle's entry lacks (both, the first time) is seeded from the
-in-memory `VEHICLE_CONFIG` values, so its capacity history continues. `capacity_backfill`
+in-memory `VEHICLE_CONFIG` values, so its capacity history continues. The external
+ledger file is replaced atomically (`configs._write_capacity_ledger`: a temporary file
+beside it, fsynced, then `os.replace`, retried briefly on a `PermissionError`), so an
+interrupted write never truncates it; the bytes are those of a direct write, and the
+file keeps its permission bits. `capacity_backfill`
 reproduces the identical ledger from existing xlsx without re-running (it reads the
 `Battery Capacity`/`SOC Change`/`Energy Source` columns; the `=NA()` Stop cells read back
 as 0 and are dropped by the donor guard), into the same target; `--dry-run` writes

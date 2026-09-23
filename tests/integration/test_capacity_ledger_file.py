@@ -9,14 +9,19 @@ has; those semantics are pinned in ``test_capacity_ledger.py`` and re-checked
 byte for byte at the bottom of this module.
 
 The numbers themselves must not depend on the write target, so the two modes are
-also run side by side on the same inputs and compared.
+also run side by side on the same inputs and compared. The ledger file itself is
+replaced atomically, never rewritten in place, so an interrupted write cannot
+destroy the capacity history it holds.
 """
 
 from __future__ import annotations
 
 import copy
 import datetime
+import errno
 import json
+import os
+import stat
 
 import pytest
 
@@ -342,6 +347,188 @@ def test_a_damaged_ledger_is_never_overwritten(config_dir, ledger_path):
     with pytest.raises(ValueError):
         _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
     assert ledger_path.read_text(encoding="utf-8") == "[]"
+
+
+# ── Writing the ledger file: atomically, and byte for byte as before ─────────
+
+_LEDGER = {
+    REG: {
+        "effective_capacity_kwh": 350.0,
+        "effective_capacity_quarterly": {
+            "20241001_20250101": {"kwh": 300.0, "n": 10},
+            "20250101_20250401": {"kwh": 400.0, "n": 10},
+        },
+    },
+    OTHER: {"effective_capacity_kwh": None, "note": "Zürich – dépôt"},  # non-ASCII
+}
+
+
+def _direct_write(path, ledger):
+    """The in-place writer the atomic one replaced: the byte-format reference."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(ledger, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+
+
+def _temporaries(directory):
+    return sorted(p.name for p in directory.iterdir() if p.name.endswith(".tmp"))
+
+
+def _refused(attempts):
+    """An ``os.replace`` stand-in that is always refused, as Windows may be."""
+
+    def replace(source, target):
+        attempts.append((source, target))
+        raise PermissionError(errno.EACCES, "The process cannot access the file")
+
+    return replace
+
+
+def test_the_ledger_file_holds_the_bytes_a_direct_write_gives(tmp_path):
+    reference, written = tmp_path / "reference.json", tmp_path / "ledger.json"
+    _direct_write(reference, _LEDGER)
+    configs._write_capacity_ledger(written, _LEDGER)
+    assert written.read_bytes() == reference.read_bytes()
+    assert _temporaries(tmp_path) == []
+
+
+def test_rewriting_a_longer_ledger_leaves_nothing_of_it(tmp_path):
+    reference, written = tmp_path / "reference.json", tmp_path / "ledger.json"
+    longer = {f"REG{i:02d}": _LEDGER[REG] for i in range(20)}
+    configs._write_capacity_ledger(written, longer)
+    configs._write_capacity_ledger(written, _LEDGER)
+    _direct_write(reference, _LEDGER)
+    assert written.read_bytes() == reference.read_bytes()
+
+
+def test_a_write_that_fails_part_way_leaves_the_old_ledger_whole(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    _direct_write(path, _LEDGER)
+    before = path.read_bytes()
+
+    def dump_part_then_fail(_obj, fh, **_kwargs):
+        fh.write('{\n  "LEDGER01": {\n    "effective_capa')  # part of the file ...
+        raise OSError(errno.ENOSPC, "No space left on device")  # ... then a full disk
+
+    monkeypatch.setattr(configs.json, "dump", dump_part_then_fail)
+    with pytest.raises(OSError, match="No space left"):
+        configs._write_capacity_ledger(path, {REG: {"effective_capacity_kwh": 1.0}})
+
+    assert path.read_bytes() == before
+    assert _temporaries(tmp_path) == []
+
+
+def test_a_write_back_that_fails_part_way_keeps_the_history(
+    config_dir, ledger_path, monkeypatch
+):
+    _write(ledger_path, _LEDGER)
+    before = ledger_path.read_bytes()
+    in_memory = copy.deepcopy(constants.VEHICLE_CONFIG[REG])
+
+    def dump_part_then_fail(_obj, fh, **_kwargs):
+        fh.write("{")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(configs.json, "dump", dump_part_then_fail)
+    with pytest.raises(OSError):
+        _persist_effective_capacity(REG, 480.0, 20, "charge", "20250401_20250701")
+
+    assert ledger_path.read_bytes() == before
+    assert _temporaries(ledger_path.parent) == []
+    # Nothing was persisted, so nothing is mirrored into memory either.
+    assert constants.VEHICLE_CONFIG[REG] == in_memory
+
+
+def test_a_replace_refused_twice_is_retried_until_it_succeeds(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    _direct_write(path, {"OLD01": {"effective_capacity_kwh": 1.0}})
+    real_replace = os.replace
+    attempts, pauses = [], []
+
+    def flaky_replace(source, target):
+        attempts.append((source, target))
+        if len(attempts) <= 2:
+            raise PermissionError(errno.EACCES, "The process cannot access the file")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(configs.os, "replace", flaky_replace)
+    monkeypatch.setattr(configs.time, "sleep", pauses.append)
+    configs._write_capacity_ledger(path, _LEDGER)
+
+    assert len(attempts) == 3
+    assert pauses == [configs._LEDGER_REPLACE_DELAY_S] * 2
+    assert json.loads(path.read_text(encoding="utf-8")) == _LEDGER
+    assert _temporaries(tmp_path) == []
+
+
+def test_a_replace_that_stays_refused_raises_and_leaves_no_temporary(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "ledger.json"
+    _direct_write(path, _LEDGER)
+    before = path.read_bytes()
+    attempts = []
+    monkeypatch.setattr(configs.os, "replace", _refused(attempts))
+    monkeypatch.setattr(configs.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(PermissionError):
+        configs._write_capacity_ledger(path, {REG: {"effective_capacity_kwh": 1.0}})
+
+    assert len(attempts) == configs._LEDGER_REPLACE_ATTEMPTS == 5
+    assert path.read_bytes() == before
+    assert _temporaries(tmp_path) == []
+
+
+def test_any_other_replace_error_is_raised_at_once(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    attempts = []
+
+    def busy(source, target):
+        attempts.append((source, target))
+        raise OSError(errno.EBUSY, "Device or resource busy")
+
+    monkeypatch.setattr(configs.os, "replace", busy)
+    with pytest.raises(OSError, match="busy"):
+        configs._write_capacity_ledger(path, _LEDGER)
+    assert len(attempts) == 1
+    assert not path.exists()
+    assert _temporaries(tmp_path) == []
+
+
+def test_a_rewritten_ledger_keeps_its_permission_bits(tmp_path):
+    path = tmp_path / "ledger.json"
+    _direct_write(path, _LEDGER)
+    os.chmod(path, 0o640)  # on Windows only the read-only flag maps onto these
+    before = stat.S_IMODE(os.stat(path).st_mode)
+    configs._write_capacity_ledger(path, {REG: {"effective_capacity_kwh": 1.0}})
+    assert stat.S_IMODE(os.stat(path).st_mode) == before
+
+
+def test_a_new_ledger_gets_the_permission_bits_of_a_direct_write(tmp_path):
+    reference, written = tmp_path / "reference.json", tmp_path / "ledger.json"
+    _direct_write(reference, _LEDGER)
+    configs._write_capacity_ledger(written, _LEDGER)
+    assert stat.S_IMODE(os.stat(written).st_mode) == stat.S_IMODE(
+        os.stat(reference).st_mode
+    )
+
+
+def test_a_refused_write_over_a_read_only_ledger_leaves_no_temporary(
+    tmp_path, monkeypatch
+):
+    # The temporary file takes the ledger's read-only mode; Windows cannot
+    # delete a read-only file, so the clean-up has to make it writable first.
+    path = tmp_path / "ledger.json"
+    _direct_write(path, _LEDGER)
+    os.chmod(path, stat.S_IREAD)
+    try:
+        monkeypatch.setattr(configs.os, "replace", _refused([]))
+        monkeypatch.setattr(configs.time, "sleep", lambda _seconds: None)
+        with pytest.raises(PermissionError):
+            configs._write_capacity_ledger(path, {REG: {}})
+        assert _temporaries(tmp_path) == []
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
 
 # ── The two write targets compute the same numbers ───────────────────────────

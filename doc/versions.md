@@ -646,7 +646,16 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   continues each vehicle's capacity history instead of restarting it, and an entry that
   holds only `effective_capacity_kwh` keeps the quarterly history the overlay was
   showing instead of collapsing the average onto the new period. Both targets share
-  one merge function (`_merge_period_capacity`).
+  one merge function (`_merge_period_capacity`). The ledger file is never rewritten in
+  place: the write goes to a temporary file in the same directory, is flushed and
+  fsynced, and replaces the ledger in one `os.replace`, retried for up to five attempts
+  0.2 s apart while it is refused with `PermissionError` (Windows, while a sync client,
+  an editor or a virus scanner holds the file). A kill, a full disk or an interrupted
+  sync therefore leaves the previous ledger whole, and any failure removes the
+  temporary file. The bytes are exactly those of a direct write (`indent=2`,
+  `ensure_ascii=False`, trailing newline), and the ledger keeps its permission bits (a
+  new one gets those a direct write gives it). The backfill writes the ledger the same
+  way.
 - **Backfill** (`capacity_backfill`): with the variable set, the rebuilt entries are
   written into the ledger — exactly the entries the `vehicles.json` path would have
   rewritten, both keys in full, whatever the entry held before — every other ledger

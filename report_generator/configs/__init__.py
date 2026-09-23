@@ -12,7 +12,9 @@ By default both live in ``vehicles.json`` inside the vendored ``configs/``
 directory, and ``JOLT_CONFIG_DIR`` moves that whole directory. Setting
 ``JOLT_CAPACITY_LEDGER`` to the path of a JSON file separates the state from the
 parameters: the ledger keys are then read from that file (overlaid on
-``vehicles.json``) and written to it, and ``vehicles.json`` is never written.
+``vehicles.json``) and written to it, and ``vehicles.json`` is never written. The
+ledger file is never rewritten in place: each write replaces it atomically, so an
+interrupted write leaves the previous ledger whole.
 
 Consumers read the configs through the loaders below, never by file path:
 
@@ -37,8 +39,12 @@ read, and a key an entry does not carry leaves the ``vehicles.json`` value)::
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import stat
+import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -54,6 +60,12 @@ LEDGER_KEYS: tuple[str, ...] = (
     "effective_capacity_kwh",
     "effective_capacity_quarterly",
 )
+
+#: Attempts at moving a newly written ledger onto the old one, and the pause
+#: between them. On Windows the move fails with ``PermissionError`` while another
+#: process — a sync client, an editor, a virus scanner — briefly holds the file.
+_LEDGER_REPLACE_ATTEMPTS = 5
+_LEDGER_REPLACE_DELAY_S = 0.2
 
 
 def get_config_path(name: str) -> Path:
@@ -211,7 +223,69 @@ def _read_capacity_ledger(path: Path, *, lock: bool = True) -> dict:
 
 
 def _write_capacity_ledger(path: Path, ledger: dict) -> None:
-    """Write the ledger in the ``vehicles.json`` format. The caller holds the lock."""
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(ledger, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    """Write the ledger in the ``vehicles.json`` format. The caller holds the lock.
+
+    The write is atomic. The JSON goes to a temporary file in the ledger's own
+    directory (``<ledger>.<random>.tmp``), is flushed and fsynced, and then
+    replaces the ledger in a single ``os.replace``: a writer killed part-way, a
+    full disk or an interrupted sync leaves the previous ledger whole, never a
+    truncated file that the next read would reject, taking the capacity history
+    with it. The bytes are those of a direct write, and the ledger keeps its
+    permission bits (a new one gets those a direct write would have given it).
+    A replace refused with ``PermissionError`` is retried a few times; when it
+    still fails, or anything else goes wrong, the temporary file is removed and
+    the error raised.
+    """
+    path = Path(path)
+    mode = _ledger_file_mode(path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = None  # the file object owns the descriptor from here on
+            json.dump(ledger, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp_name, mode)
+        _replace_ledger_file(tmp_name, path)
+    except BaseException:
+        if fd is not None:
+            os.close(fd)
+        _discard_temporary_file(tmp_name)
+        raise
+
+
+def _ledger_file_mode(path: Path) -> int:
+    """The permission bits for a rewritten ledger: its own, or a new file's."""
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        # What a direct ``open(path, "w")`` gives a new file: 0o666 less the
+        # umask. The umask has no getter, so it is set and restored at once
+        # (to the most restrictive value in between).
+        umask = os.umask(0o077)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
+def _replace_ledger_file(source: str, target: Path) -> None:
+    """Move ``source`` onto ``target``, retrying while that is refused."""
+    for attempt in range(1, _LEDGER_REPLACE_ATTEMPTS + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == _LEDGER_REPLACE_ATTEMPTS:
+                raise
+            time.sleep(_LEDGER_REPLACE_DELAY_S)
+
+
+def _discard_temporary_file(name: str) -> None:
+    """Remove a temporary ledger file, as far as possible."""
+    with contextlib.suppress(OSError):
+        # Windows refuses to delete a read-only file (a copied read-only mode).
+        os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
+    with contextlib.suppress(OSError):
+        os.unlink(name)

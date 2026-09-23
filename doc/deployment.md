@@ -117,6 +117,15 @@ only needed to run with your own copy of `vehicles.json` / `pipelines.json`.
 - **The write target must be writable.** A write-back that cannot write — including the
   lock file beside it — raises, and that report is not written. A read-only config
   directory therefore needs the external ledger.
+- **The ledger file is replaced, never rewritten in place.** Each write goes to a
+  temporary `<ledger>.<random>.tmp` beside it, is flushed to disk, and then replaces the
+  ledger in one atomic rename, so a killed process, a full disk or an interrupted sync
+  leaves the previous ledger whole. The ledger keeps its permission bits. The rename
+  needs the ledger's *directory* to be writable (as the lock file already does): mount
+  a directory for it, not the single file, which cannot be replaced. On Windows a rename
+  refused while another program (a sync client, an editor, a virus scanner) holds the
+  file is retried for about a second before the write-back raises. A `.tmp` file left
+  by a killed process is safe to delete.
 - `python -m report_generator.capacity_backfill --report-db <dir>` rebuilds the ledger
   from finished reports, into whichever of the two homes is active; with `--dry-run` it
   prints the result and writes neither `vehicles.json` nor the ledger (in the external
