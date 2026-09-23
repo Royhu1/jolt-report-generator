@@ -750,3 +750,76 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
     rule and are verbatim.
 
   Full suite: **1183 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
+
+## 3.7.0 — date-effective vehicle settings (`period_overrides`)
+
+- **Data namespace: unchanged, still `3.3.0/`.** No vehicle in the shipped
+  `vehicles.json` sets the new field, and a vehicle without it is segmented exactly as
+  before, so no reported cell can change. Verified offline: every registered fixture's
+  segmentation regenerates its golden byte for byte, also with the field set to `null`
+  or `[]`; the three EV fixture workbooks built through the generator's own per-leg loop,
+  capacity correction, EP grading, Stop insertion and writer match 3.6.0 in all 6511
+  cells; and a vehicle without the field never reaches the resolver.
+- **Why.** Vehicle settings had no date, so changing a vehicle's segmentation meant
+  re-segmenting its whole history. A feed can change character mid-trial — the first
+  user will be a SOC-branch vehicle whose telematics speed thinned out from July 2026,
+  merging trips across stops, while its Logger kept a good 1 Hz speed — and the
+  segmentation before the change must stay exactly as it is. The override itself comes
+  with that vehicle's re-tune, not in this release.
+- **Schema.** Optional, per vehicle: `"period_overrides": [{"from": "YYYY-MM-DD", "to":
+  "YYYY-MM-DD" | null, "reason": "<text>", "set": {<key>: <value>, ...}}]`. `from` is
+  required and inclusive, `to` optional and exclusive (`null` or absent: open-ended),
+  `reason` documentation only, `set` required and non-empty.
+- **What `set` may change** (`configs.PERIOD_OVERRIDE_KEYS`): the vehicle settings the
+  per-leg segmentation reads — `pipeline`, `prefer_logger_speed`,
+  `min_stop_duration_min`, `split_by_mass`, `merge_by_mass`, `split_long_stops_min`,
+  `min_cluster_gap_kg` (all read by `run_segment_detection`) and `mass_agg` (read by
+  `resolve_mass_agg`: a vehicle-level estimator outranks the pipeline's, so a window
+  that switches the pipeline could not otherwise change it). The column mappings, the
+  capacity keys and the ledger, `fuel_type`, `srf_reg`, the operator keys and the field
+  itself stay whole-vehicle; the diesel-only trip settings are out of reach, see below.
+- **Load-time validation.** `load_vehicle_configs()` — and so the import-time load —
+  raises `ValueError` naming the vehicle and the override for a key outside the
+  allow-list, a value of the wrong kind (flags must be `true`/`false`, durations and the
+  cluster gap positive numbers, `split_long_stops_min` may be `null` to switch it off), a
+  missing or empty `set`, a missing `from`, an unknown field, a date not written
+  `YYYY-MM-DD`, `to` not after `from`, overlapping windows (adjacent ones are fine), and
+  a `pipeline` that is not in `pipelines.json`. A vehicle without the field costs one key
+  lookup; `pipelines.json` is read only for an override that sets a pipeline.
+- **Resolution.** `configs.effective_vehicle_config(cfg, when)` (new, public) returns the
+  entry updated with the `set` of the window containing `when`, as a new dict without
+  `period_overrides`; it never modifies `cfg` and resolving its result again changes
+  nothing. A leg is resolved for the UTC date of the first valid timestamp of its
+  telematics frame (`segmentation.timeutil.frame_utc_date`), so a leg starting at 23:59
+  UTC the day before `from` keeps the base settings. `run_segment_detection` resolves
+  from the frame it is handed — the generator and an external renderer re-driving it on
+  the same frame get the same settings with no change on their side —
+  `resolve_mass_agg` takes an optional keyword `when`, and the generator resolves the
+  per-segment mass estimator it hands the row builder per leg, from the same frame.
+- **Diesel.** A DIESEL vehicle may not carry the field: the diesel pipeline segments its
+  legs with its own settings (`speed_threshold_kmh`, `min_trip_duration_min`,
+  `min_trip_distance_km`, `min_stop_duration_min`, read straight from the entry), its
+  `pipeline` is a dispatch marker rather than a `pipelines.json` key, and no diesel
+  vehicle needs it; the load rejects it rather than letting it be silently ignored.
+- **Callers outside the package.** One that re-drives `run_segment_detection` needs
+  nothing. One that reads a per-leg setting itself — `resolve_mass_agg(reg)` for the mass
+  estimator, say — gets the base settings unless it passes the leg's date:
+  `resolve_mass_agg(reg, when=frame_utc_date(df))` or
+  `effective_vehicle_config(cfg, frame_utc_date(df))`.
+- **Fixture maker.** `tests/fixtures/make_fixture.py --config-from` freezes a vehicle with
+  overrides as it applies on the fixture's date, so the frozen entry carries no
+  overrides and never names a live pipeline.
+- **Test suite.** New: 79 unit tests (every validation error, the overlap shapes, the
+  import-time load in a fresh interpreter; resolution before, on and after `from`, `to`
+  exclusive, between two windows, no field, idempotence, purity, datetimes by their UTC
+  date; the leg-date rule; `resolve_mass_agg(when=)`), 16 fixture-driven integration
+  tests (a leg on or after `from` runs the override's speed branch on Logger trips and
+  matches the flattened config while differing from the base; a leg before it matches
+  the golden; a leg starting at 23:59 the day before `from` keeps the base, one at 00:00
+  on the day takes the override; a closed window no longer applies; the generator's own
+  per-leg call and a direct call on the same frame give the same segments and hand the
+  same mass estimator to the rows and to the painter; an unset field leaves every golden
+  byte-identical; a vehicle without the field never reaches the resolver), and 3
+  fixture-maker tests.
+
+  Full suite: **1281 passed, 4 skipped** (3.6.0: 1183 passed, 4 skipped).
