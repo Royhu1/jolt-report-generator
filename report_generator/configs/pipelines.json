@@ -371,6 +371,7 @@
       "min_energy_kwh": 2.0
     },
     "merge_by_mass": false,
+    "reconcile_charge_boundaries": true,
     "speed_params": {
       "speed_threshold_kmh": 1.0,
       "min_stop_duration_min": 31.0,
