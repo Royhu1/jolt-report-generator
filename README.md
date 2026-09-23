@@ -83,6 +83,10 @@ telematics** and are compared field by field against frozen golden snapshots.
 See `tests/README.md` for the layout and `tests/fixtures/README.md` for what the
 fixtures contain and how they were de-identified.
 
+The same `pytest -q` runs in CI (`.github/workflows/tests.yml`: ubuntu, Python 3.11,
+installed from `requirements.txt` + `requirements-dev.txt` only) on every push and
+every pull request.
+
 ## Vehicles that are not configured
 
 `report_generator/configs/vehicles.json` holds the tuned parameters for the known fleet. A

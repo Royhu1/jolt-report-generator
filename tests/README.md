@@ -7,6 +7,12 @@ pytest                       # ~45 s, 1083 tests, fully offline
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
 
+CI runs exactly this on every push and pull request
+(`.github/workflows/tests.yml`: ubuntu-latest, Python 3.11, a clean install from
+`requirements.txt` + `requirements-dev.txt`). So a test must not depend on a local
+cache, a key, a Windows path or anything else only a developer machine has — if one
+does, fix the test.
+
 ## Layout
 
 ```
