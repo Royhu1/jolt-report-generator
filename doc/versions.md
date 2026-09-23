@@ -622,8 +622,9 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   never by file path: `get_capacity_ledger_path() -> Path | None` (the variable, read at
   call time; unset, empty or blank means none), `load_vehicle_configs() -> dict` (a fresh
   read of `vehicles.json` with the ledger overlaid), `load_pipeline_configs() -> dict` and
-  `apply_capacity_ledger(vehicles, *, skip=None) -> Path | None` (the same overlay,
-  re-applied in place to configs already loaded; a strict no-op without the variable),
+  `apply_capacity_ledger(vehicles, *, skip=None) -> Path | None` (makes the ledger keys
+  of configs already loaded exactly what `load_vehicle_configs()` gives at that moment,
+  in place; a strict no-op without the variable),
   plus the constants `CAPACITY_LEDGER_ENV_VAR` and `LEDGER_KEYS`.
   `segmentation.constants` builds `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` through them —
   still the single load site, still shared by reference; `constants._load_json` is kept
@@ -641,12 +642,14 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   write, and only reads `vehicles.json` — for the unchanged membership rule that only a
   vehicle in `vehicles.json` ever gets an entry. The period is merged into exactly what
   the loader shows the reports: each ledger key the vehicle's entry lacks — both, when
-  it has no entry yet — is seeded from its in-memory `VEHICLE_CONFIG` values (the
-  `vehicles.json` entry when it is absent from memory), so switching a deployment over
-  continues each vehicle's capacity history instead of restarting it, and an entry that
-  holds only `effective_capacity_kwh` keeps the quarterly history the overlay was
-  showing instead of collapsing the average onto the new period. Both targets share
-  one merge function (`_merge_period_capacity`). The ledger file is never rewritten in
+  it has no entry yet — is seeded from its `vehicles.json` entry, read fresh, so
+  switching a deployment over continues each vehicle's capacity history instead of
+  restarting it, and an entry that holds only `effective_capacity_kwh` keeps the
+  quarterly history the overlay was showing instead of collapsing the average onto the
+  new period. The seed is never the in-memory `VEHICLE_CONFIG`: after the variable is
+  pointed at another file, or the file edited, memory can still hold the previous
+  ledger's history, and nothing written may depend on it. Both targets share one merge
+  function (`_merge_period_capacity`). The ledger file is never rewritten in
   place: the write goes to a temporary file in the same directory, is flushed and
   fsynced, and replaces the ledger in one `os.replace`, retried for up to five attempts
   0.2 s apart while it is refused with `PermissionError` (Windows, while a sync client,
@@ -669,12 +672,18 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   `report_generator.generate_report()` and the CLI, for the EV and the diesel dispatch
   alike — now calls `configs.apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the
   vehicle's config, and `main()` also applies it once `.env` is loaded, before the
-  generator is built (idempotent; a strict no-op without the variable, which never
-  re-reads `vehicles.json`). A runtime fallback config injected by an earlier report is
-  skipped: an un-onboarded vehicle takes no ledger state, so generating it twice in one
-  process gives the same report twice. The same import-order limit applies, unchanged,
-  to `JOLT_CONFIG_DIR` and to the postcode-cache path under `JOLT_CACHE_DIR`;
-  `deployment.md` now says to export those rather than rely on `.env`.
+  generator is built. It makes the two ledger keys of every configured vehicle exactly
+  what a fresh `load_vehicle_configs()` gives — the ledger's value, else the
+  `vehicles.json` value, else no key — so a variable set after the import, pointed at
+  another file or at an edited one, never leaves a capacity or a history in memory
+  from a ledger the reports no longer read. It is idempotent, and without the variable
+  a strict no-op that reads nothing, neither the ledger nor `vehicles.json`. A
+  registration not in `vehicles.json` is left alone, and so is a runtime fallback
+  config injected by an earlier report: an un-onboarded vehicle takes no ledger state,
+  so generating it twice in one process gives the same report twice. The same
+  import-order limit applies, unchanged, to `JOLT_CONFIG_DIR` and to the postcode-cache
+  path under `JOLT_CACHE_DIR`; `deployment.md` now says to export those rather than
+  rely on `.env`.
 - **Documentation correction.** `deployment.md` said a read-only config directory makes
   the write-back no-op with a warning. It does not: the write-back raises
   `PermissionError` — on the lock file or on `vehicles.json` — before the report is
@@ -683,23 +692,30 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   says so and recommends the external ledger for a read-only config directory.
 - **Test suite.** The session conftest removes `JOLT_CAPACITY_LEDGER` at import, since a
   value inherited from the developer's shell would both change what the suite reads and
-  let a test write into a real ledger. New: 24 unit tests of the loaders and the overlay
-  semantics (both keys, a partial entry, an uncovered vehicle, a ledger-only
-  registration, a missing / blank / damaged file, the import-time overlay in a fresh
-  interpreter, and `apply_capacity_ledger` on configs already loaded — a strict no-op
-  without the variable, in place, idempotent, the skip rule); 40 integration tests of
-  the write side (ledger written and `vehicles.json` untouched, the lock, seeding from
-  memory and from the file, merging into an existing entry, a partial entry continuing
-  the history the reports read, the merge equal to the loader's view for every entry
-  shape, the membership rule, the no-donor no-op, backfill into the ledger — a partial
-  entry written out in full — the dry run, both targets producing the same entry,
-  byte-for-byte for the unset path, and the atomic file write: a direct write's bytes
-  and permission bits, a failure part-way leaving the old ledger whole, the
-  `PermissionError` retry and its limit, no temporary file left behind); 5 integration
+  let a test write into a real ledger, and an autouse fixture fails any test that
+  leaves it set behind it, so a leak can never make the outcome depend on test order.
+  New: 28 unit tests of the loaders and the overlay semantics (both keys, a partial
+  entry, an uncovered vehicle, a ledger-only registration, a missing / blank / damaged
+  file, the import-time overlay in a fresh interpreter, and `apply_capacity_ledger` on
+  configs already loaded — a strict no-op without the variable that reads nothing, the
+  loader's view in place, another ledger named or the file edited restoring every key
+  it no longer carries, idempotent, copies, a registration not in `vehicles.json` and
+  a skipped config left alone); 42 integration tests of the write side (ledger written
+  and `vehicles.json` untouched, the lock, seeding from the file and never from memory,
+  merging into an existing entry, a partial entry continuing the history the reports
+  read, the merge equal to the loader's view for every entry shape, a ledger named
+  later or edited down to its scalar between two reports never receiving the previous
+  ledger's history, the membership rule, the no-donor no-op, backfill into the ledger
+  — a partial entry written out in full — the dry run, both targets producing the same
+  entry, byte-for-byte for the unset path, and the atomic file write: a direct write's
+  bytes and permission bits, a failure part-way leaving the old ledger whole, the
+  `PermissionError` retry and its limit, no temporary file left behind); 7 integration
   tests of the ledger read at report start (the EV and the diesel dispatch, the
-  convenience function, the strict no-op without the variable, a runtime fallback
-  config left alone); plus 2 CLI tests (a ledger named only in `.env` is read before
-  the generator is built; without the variable the configs are left alone).
+  convenience function, a ledger changed between two reports — another file or the
+  file edited — leaving no stale capacity, the strict no-op without the variable, a
+  runtime fallback config left alone); plus 2 CLI tests (a ledger named only in `.env`
+  is read before the generator is built; without the variable the configs are left
+  alone).
 - **Repository tooling** (no effect on the package or on any report):
   - CI — `.github/workflows/tests.yml` runs the offline suite on ubuntu / Python 3.11,
     from a clean install of the two requirements files, on every push and pull request.
@@ -728,4 +744,4 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
     fixtures added). The four original fixtures' heading columns predate the heading
     rule and are verbatim.
 
-  Full suite: **1169 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
+  Full suite: **1177 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).

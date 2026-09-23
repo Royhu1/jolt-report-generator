@@ -230,11 +230,16 @@ def test_main_reads_a_capacity_ledger_named_only_in_dotenv(
     ledger.write_text(
         json.dumps({"EVSPD01": {"effective_capacity_kwh": 432.1}}), encoding="utf-8"
     )
-    monkeypatch.setitem(
-        constants.VEHICLE_CONFIG,
-        "EVSPD01",
-        {"srf_reg": "EVSPD01", "effective_capacity_kwh": 360.6},
+    configured = {"srf_reg": "EVSPD01", "effective_capacity_kwh": 360.6}
+    # A configured vehicle — the ledger records state for those only.
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "vehicles.json").write_text(
+        json.dumps({"EVSPD01": configured}), encoding="utf-8"
     )
+    (config_dir / "pipelines.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("JOLT_CONFIG_DIR", str(config_dir))
+    monkeypatch.setitem(constants.VEHICLE_CONFIG, "EVSPD01", dict(configured))
     monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
 
     def load_dotenv(*_args, **_kwargs):  # what a .env line would do

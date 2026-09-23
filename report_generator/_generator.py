@@ -224,12 +224,13 @@ class JOLTReportGenerator:
         de = datetime.datetime.strptime(date_end, "%Y-%m-%d")
 
         # VEHICLE_CONFIG is loaded at import, but JOLT_CAPACITY_LEDGER may have
-        # been set since (a .env loaded later, say). The capacity seed read below
-        # must come from the ledger the write-back targets, so the ledger is
-        # applied again here, before the vehicle's config is read — a strict
-        # no-op without the variable. A runtime fallback config injected by an
-        # earlier call is skipped: an un-onboarded vehicle takes no state from
-        # the ledger, just as a ledger-only registration is ignored at load.
+        # been set since (a .env loaded later, say), pointed at another file, or
+        # the file edited. The capacity seed read below must come from the ledger
+        # the write-back targets, so before the vehicle's config is read its
+        # ledger keys are made exactly what a fresh load gives — a strict no-op
+        # without the variable. A runtime fallback config injected by an earlier
+        # call is skipped: an un-onboarded vehicle takes no state from the
+        # ledger, just as a ledger-only registration is ignored at load.
         apply_capacity_ledger(VEHICLE_CONFIG, skip=is_runtime_config)
         cfg = VEHICLE_CONFIG.get(reg)
         # ── General fallback pipeline for un-onboarded registrations ──────────

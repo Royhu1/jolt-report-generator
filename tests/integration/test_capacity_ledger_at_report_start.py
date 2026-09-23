@@ -1,13 +1,14 @@
-"""A capacity ledger named after the import is read when a report starts.
+"""The capacity a report reads comes from the ledger its write-back targets.
 
 ``VEHICLE_CONFIG`` is loaded once, at import. A library consumer may import
 ``report_generator`` first and only then set ``JOLT_CAPACITY_LEDGER`` (by loading
-a ``.env`` later, say). The write-back targets whatever the variable names at
-that moment, so the capacity the report reads must come from the same file:
-every public report-generation entry point re-applies the ledger to the shared
-in-memory configs before it reads the vehicle's config — for the EV and the
-diesel dispatch alike, which both run inside
-``JOLTReportGenerator.generate_report``.
+a ``.env`` later, say); a long-running process may see the variable pointed at
+another file, or the file edited, between two reports. The write-back targets
+whatever the variable names at that moment, so every public report-generation
+entry point — for the EV and the diesel dispatch alike, which both run inside
+``JOLTReportGenerator.generate_report`` — makes the ledger keys of the shared
+in-memory configs exactly what a fresh ``load_vehicle_configs()`` gives before
+it reads the vehicle's config.
 
 The SRF surface is mocked throughout and the mocked fetch returns no legs, so
 each report stops right after its config has been read: nothing is fetched and
@@ -31,6 +32,7 @@ from report_generator.data_class import ServerData
 from report_generator.segmentation import constants
 
 LEDGER_Q = {"20250101_20250401": {"kwh": 432.1, "n": 20}}
+OTHER_Q = {"20250401_20250701": {"kwh": 405.0, "n": 12}}
 
 
 class _RecordingConfig(dict):
@@ -64,6 +66,27 @@ def offline(monkeypatch):
 
 
 @pytest.fixture
+def configured(monkeypatch, tmp_path, frozen_configs):
+    """The frozen aliases as configured vehicles: in memory AND in vehicles.json.
+
+    The ledger records state for configured vehicles only, so the aliases are
+    written into a scratch ``vehicles.json`` too. Each alias gets its own copy in
+    memory, so nothing a report does reaches the session's frozen data.
+    """
+    vehicles = frozen_configs["vehicles"]
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    (cfg_dir / "vehicles.json").write_text(json.dumps(vehicles), encoding="utf-8")
+    (cfg_dir / "pipelines.json").write_text(
+        json.dumps(frozen_configs["pipelines"]), encoding="utf-8"
+    )
+    monkeypatch.setenv("JOLT_CONFIG_DIR", str(cfg_dir))
+    for alias, cfg in vehicles.items():
+        monkeypatch.setitem(constants.VEHICLE_CONFIG, alias, copy.deepcopy(cfg))
+    return vehicles
+
+
+@pytest.fixture
 def restore_vehicle_config():
     """Undo any registration a report injects into the shared config."""
     before = set(constants.VEHICLE_CONFIG)
@@ -72,9 +95,9 @@ def restore_vehicle_config():
         del constants.VEHICLE_CONFIG[key]
 
 
-def _recording(monkeypatch, frozen_configs, alias):
+def _recording(monkeypatch, configured, alias):
     """Replace ``alias``'s shared config by a recording copy of its frozen one."""
-    cfg = _RecordingConfig(copy.deepcopy(frozen_configs["vehicles"][alias]))
+    cfg = _RecordingConfig(copy.deepcopy(configured[alias]))
     monkeypatch.setitem(constants.VEHICLE_CONFIG, alias, cfg)
     return cfg
 
@@ -86,21 +109,12 @@ def _name_the_ledger_now(monkeypatch, path, payload):
     monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(path))
 
 
-def _forbid_reading_vehicles_json(monkeypatch):
-    """The overlay must work on the configs in memory, never re-read the file."""
-
-    def _called(*_args, **_kwargs):
-        raise AssertionError("vehicles.json must not be re-read")
-
-    monkeypatch.setattr(configs, "_load_config_json", _called)
-
-
 @pytest.mark.parametrize("alias", ["EVSPD01", "DSL01"], ids=["ev", "diesel"])
 def test_a_ledger_named_after_the_import_is_read_before_the_capacity_seed(
-    monkeypatch, tmp_path, offline, frozen_configs, alias
+    monkeypatch, tmp_path, offline, configured, alias
 ):
-    assert frozen_configs["vehicles"][alias].get("effective_capacity_kwh") != 432.1
-    cfg = _recording(monkeypatch, frozen_configs, alias)
+    assert configured[alias].get("effective_capacity_kwh") != 432.1
+    cfg = _recording(monkeypatch, configured, alias)
     _name_the_ledger_now(
         monkeypatch,
         tmp_path / "state" / "capacity_ledger.json",
@@ -111,7 +125,6 @@ def test_a_ledger_named_after_the_import_is_read_before_the_capacity_seed(
             }
         },
     )
-    _forbid_reading_vehicles_json(monkeypatch)
 
     generator = JOLTReportGenerator(report_output_folder=str(tmp_path / "out"))
     assert generator.generate_report(alias, "2025-06-27", "2025-06-28") is None
@@ -125,9 +138,9 @@ def test_a_ledger_named_after_the_import_is_read_before_the_capacity_seed(
 
 
 def test_the_convenience_function_reads_a_ledger_named_after_the_import(
-    monkeypatch, tmp_path, offline, frozen_configs
+    monkeypatch, tmp_path, offline, configured
 ):
-    cfg = _recording(monkeypatch, frozen_configs, "EVSPD01")
+    cfg = _recording(monkeypatch, configured, "EVSPD01")
     _name_the_ledger_now(
         monkeypatch,
         tmp_path / "state" / "capacity_ledger.json",
@@ -143,6 +156,41 @@ def test_the_convenience_function_reads_a_ledger_named_after_the_import(
     assert constants.VEHICLE_CONFIG["EVSPD01"]["effective_capacity_kwh"] == 432.1
 
 
+@pytest.mark.parametrize("change", ["another file", "the file edited"])
+def test_a_report_after_the_ledger_changed_reads_nothing_of_the_old_one(
+    monkeypatch, tmp_path, offline, configured, change
+):
+    # Report 1 reads ledger A, which carries both keys.
+    cfg = _recording(monkeypatch, configured, "EVSPD01")
+    first = tmp_path / "state" / "capacity_ledger.json"
+    _name_the_ledger_now(
+        monkeypatch,
+        first,
+        {
+            "EVSPD01": {
+                "effective_capacity_kwh": 432.1,
+                "effective_capacity_quarterly": LEDGER_Q,
+            }
+        },
+    )
+    generator = JOLTReportGenerator(report_output_folder=str(tmp_path / "out"))
+    generator.generate_report("EVSPD01", "2025-06-27", "2025-06-28")
+    assert cfg.seed_reads[0] == 432.1
+    cfg.seed_reads.clear()
+
+    # Before report 2 the ledger carries only a quarterly history: the scalar is
+    # the one in vehicles.json again, and the history the new one.
+    second = first if change == "the file edited" else tmp_path / "other.json"
+    _name_the_ledger_now(
+        monkeypatch, second, {"EVSPD01": {"effective_capacity_quarterly": OTHER_Q}}
+    )
+    generator.generate_report("EVSPD01", "2025-06-27", "2025-06-28")
+
+    config_kwh = configured["EVSPD01"]["effective_capacity_kwh"]
+    assert cfg.seed_reads[0] == config_kwh != 432.1
+    assert cfg["effective_capacity_quarterly"] == OTHER_Q
+
+
 def test_without_the_variable_a_report_start_leaves_the_configs_alone(
     monkeypatch, tmp_path, offline, frozen_configs
 ):
@@ -154,8 +202,9 @@ def test_without_the_variable_a_report_start_leaves_the_configs_alone(
     def _called(*_args, **_kwargs):
         raise AssertionError("nothing may be read without the variable")
 
+    # Neither the ledger nor vehicles.json is read.
     monkeypatch.setattr(configs, "_read_capacity_ledger", _called)
-    _forbid_reading_vehicles_json(monkeypatch)
+    monkeypatch.setattr(configs, "_load_config_json", _called)
 
     generator = JOLTReportGenerator(report_output_folder=str(tmp_path / "out"))
     assert generator.generate_report("EVSPD01", "2025-06-27", "2025-06-28") is None
@@ -171,9 +220,9 @@ def test_a_runtime_fallback_config_takes_nothing_from_the_ledger(
     """An un-onboarded vehicle generated twice in one process reads no ledger state.
 
     Its runtime config is injected into ``VEHICLE_CONFIG`` by the first report,
-    so the second report's overlay finds it there; a ledger entry for the same
-    registration (e.g. a vehicle since removed from ``vehicles.json``) must not
-    reach it — the ledger records state for configured vehicles only.
+    so the second report finds it there. By then the registration may even be
+    in ``vehicles.json`` — onboarded while the process ran — with a ledger entry;
+    neither may reach the runtime config, so both reports read the same capacity.
     """
     runtime = {
         "srf_reg": "ZZ99 ZZZ",
@@ -186,6 +235,12 @@ def test_a_runtime_fallback_config_takes_nothing_from_the_ledger(
     }
     builder = Mock(return_value=dict(runtime))
     monkeypatch.setattr(gen_mod, "build_runtime_vehicle_config", builder)
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    onboarded = {"srf_reg": "ZZ99 ZZZ", "effective_capacity_kwh": 480.0}
+    (cfg_dir / "vehicles.json").write_text(json.dumps({"ZZ99ZZZ": onboarded}), "utf-8")
+    (cfg_dir / "pipelines.json").write_text("{}", "utf-8")
+    monkeypatch.setenv("JOLT_CONFIG_DIR", str(cfg_dir))
     _name_the_ledger_now(
         monkeypatch,
         tmp_path / "state" / "capacity_ledger.json",

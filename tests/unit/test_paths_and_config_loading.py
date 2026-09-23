@@ -196,9 +196,11 @@ def synthetic_config_dir(monkeypatch, tmp_path):
     return cfg
 
 
-def _use_ledger(monkeypatch, tmp_path, payload=None, text=None):
+def _use_ledger(
+    monkeypatch, tmp_path, payload=None, text=None, name="capacity_ledger.json"
+):
     """Point JOLT_CAPACITY_LEDGER at a ledger file, written unless both are None."""
-    path = tmp_path / "state" / "capacity_ledger.json"
+    path = tmp_path / "state" / name
     if payload is not None or text is not None:
         path.parent.mkdir(exist_ok=True)
         path.write_text(text if text is not None else json.dumps(payload), "utf-8")
@@ -318,12 +320,25 @@ def test_a_damaged_ledger_fails_loudly(
         configs.load_vehicle_configs()
 
 
-# ── apply_capacity_ledger: the overlay onto configs already loaded ───────────
+# ── apply_capacity_ledger: configs already loaded, brought up to date ────────
+
+_Q_A = {"20240401_20240701": {"kwh": 450.0, "n": 20}}
+_LEDGER_A = {
+    "UTVEH01": {"effective_capacity_kwh": 450.0, "effective_capacity_quarterly": _Q_A},
+    "UTVEH02": {
+        "effective_capacity_kwh": 250.0,
+        "effective_capacity_quarterly": {"20240401_20240701": {"kwh": 250.0, "n": 9}},
+    },
+}
 
 
 def _loaded_before_the_variable():
     """Configs as a process holds them when the ledger variable is set later."""
     return json.loads(json.dumps(_VEHICLES))
+
+
+def _ledger_keys(cfg):
+    return {k: cfg[k] for k in configs.LEDGER_KEYS if k in cfg}
 
 
 def _forbid(monkeypatch, *names):
@@ -339,16 +354,19 @@ def _forbid(monkeypatch, *names):
 def test_applying_the_ledger_without_the_variable_is_a_strict_no_op(monkeypatch):
     monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
     vehicles = _loaded_before_the_variable()
+    vehicles["UTVEH01"]["effective_capacity_quarterly"] = _Q_A  # stale, and kept
+    before = json.loads(json.dumps(vehicles))
     entry = vehicles["UTVEH01"]
+    # Neither the ledger nor vehicles.json is read.
     _forbid(monkeypatch, "_read_capacity_ledger", "_load_config_json")
 
     assert configs.apply_capacity_ledger(vehicles) is None
-    assert vehicles == _VEHICLES
+    assert vehicles == before
     assert vehicles["UTVEH01"] is entry
 
 
-def test_applying_the_ledger_overlays_configs_loaded_before_it_was_named(
-    monkeypatch, tmp_path
+def test_applying_the_ledger_gives_loaded_configs_the_loader_view(
+    synthetic_config_dir, monkeypatch, tmp_path
 ):
     vehicles = _loaded_before_the_variable()
     entry = vehicles["UTVEH01"]
@@ -364,8 +382,6 @@ def test_applying_the_ledger_overlays_configs_loaded_before_it_was_named(
             "NOTAVEH": {"effective_capacity_kwh": 123.0},
         },
     )
-    # The configs are never read again: tests and callers may have changed them.
-    _forbid(monkeypatch, "_load_config_json")
 
     assert configs.apply_capacity_ledger(vehicles) == path
     assert vehicles["UTVEH01"] is entry  # written in place
@@ -374,11 +390,54 @@ def test_applying_the_ledger_overlays_configs_loaded_before_it_was_named(
     assert (entry["nominal_kwh"], entry["pipeline"]) == (540, "ut_speed")
     assert vehicles["UTVEH02"] == _VEHICLES["UTVEH02"]
     assert "NOTAVEH" not in vehicles  # the ledger cannot configure a vehicle
+    assert vehicles == configs.load_vehicle_configs()
 
 
-def test_applying_the_ledger_matches_the_loader_and_is_idempotent(
+def test_naming_another_ledger_restores_the_keys_it_lacks(
     synthetic_config_dir, monkeypatch, tmp_path
 ):
+    vehicles = _loaded_before_the_variable()
+    _use_ledger(monkeypatch, tmp_path, _LEDGER_A, name="a.json")
+    configs.apply_capacity_ledger(vehicles)
+    assert vehicles["UTVEH01"]["effective_capacity_quarterly"] == _Q_A
+
+    # Ledger B carries only UTVEH01's scalar, and nothing for UTVEH02.
+    _use_ledger(
+        monkeypatch,
+        tmp_path,
+        {"UTVEH01": {"effective_capacity_kwh": 410.0}},
+        name="b.json",
+    )
+    configs.apply_capacity_ledger(vehicles)
+
+    # Nothing of ledger A survives: each key is B's, else vehicles.json's.
+    assert _ledger_keys(vehicles["UTVEH01"]) == {
+        "effective_capacity_kwh": 410.0,
+        "effective_capacity_quarterly": _Q1,
+    }
+    assert vehicles["UTVEH02"] == _VEHICLES["UTVEH02"]
+    # UTVEH02 has no quarterly history in vehicles.json, so none is kept at all.
+    assert "effective_capacity_quarterly" not in vehicles["UTVEH02"]
+    assert vehicles == configs.load_vehicle_configs()
+
+
+def test_a_ledger_edited_between_two_applications_is_read_again(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    vehicles = _loaded_before_the_variable()
+    path = _use_ledger(monkeypatch, tmp_path, _LEDGER_A)
+    configs.apply_capacity_ledger(vehicles)
+    assert _ledger_keys(vehicles["UTVEH01"]) == _LEDGER_A["UTVEH01"]
+
+    path.write_text(json.dumps({"UTVEH01": {"effective_capacity_kwh": 410.0}}), "utf-8")
+    configs.apply_capacity_ledger(vehicles)
+
+    assert vehicles["UTVEH01"]["effective_capacity_kwh"] == 410.0
+    assert vehicles["UTVEH01"]["effective_capacity_quarterly"] == _Q1
+    assert vehicles == configs.load_vehicle_configs()
+
+
+def test_applying_the_ledger_is_idempotent(synthetic_config_dir, monkeypatch, tmp_path):
     _use_ledger(monkeypatch, tmp_path, {"UTVEH01": {"effective_capacity_kwh": 410.0}})
     vehicles = _loaded_before_the_variable()
     configs.apply_capacity_ledger(vehicles)
@@ -387,23 +446,52 @@ def test_applying_the_ledger_matches_the_loader_and_is_idempotent(
     assert vehicles == once == configs.load_vehicle_configs()
 
 
-def test_applying_the_ledger_leaves_a_skipped_config_alone(monkeypatch, tmp_path):
+def test_the_applied_values_are_copies(synthetic_config_dir, monkeypatch, tmp_path):
+    _use_ledger(monkeypatch, tmp_path, _LEDGER_A)
+    first, second = _loaded_before_the_variable(), _loaded_before_the_variable()
+    configs.apply_capacity_ledger(first)
+    configs.apply_capacity_ledger(second)
+    first["UTVEH01"]["effective_capacity_quarterly"]["x"] = {"kwh": 1.0, "n": 1}
+    assert "x" not in second["UTVEH01"]["effective_capacity_quarterly"]
+
+
+def test_a_registration_not_in_vehicles_json_is_left_alone(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    # E.g. a config only this process holds: the ledger never applies to it.
     vehicles = _loaded_before_the_variable()
-    vehicles["UTVEH02"]["_marker"] = True
+    vehicles["MEMONLY01"] = {"srf_reg": "MEMONLY01", "effective_capacity_kwh": 111.1}
     _use_ledger(
         monkeypatch,
         tmp_path,
         {
-            "UTVEH01": {"effective_capacity_kwh": 410.0},
-            "UTVEH02": {"effective_capacity_kwh": 999.9},
+            "MEMONLY01": {
+                "effective_capacity_kwh": 999.9,
+                "effective_capacity_quarterly": _Q_A,
+            }
         },
     )
+    configs.apply_capacity_ledger(vehicles)
+    assert vehicles["MEMONLY01"] == {
+        "srf_reg": "MEMONLY01",
+        "effective_capacity_kwh": 111.1,
+    }
+
+
+def test_applying_the_ledger_leaves_a_skipped_config_alone(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
+    vehicles = _loaded_before_the_variable()
+    vehicles["UTVEH02"]["_marker"] = True
+    _use_ledger(monkeypatch, tmp_path, _LEDGER_A)
     configs.apply_capacity_ledger(vehicles, skip=lambda cfg: bool(cfg.get("_marker")))
-    assert vehicles["UTVEH01"]["effective_capacity_kwh"] == 410.0
-    assert vehicles["UTVEH02"]["effective_capacity_kwh"] == 200.0
+    assert _ledger_keys(vehicles["UTVEH01"]) == _LEDGER_A["UTVEH01"]
+    assert vehicles["UTVEH02"] == {**_VEHICLES["UTVEH02"], "_marker": True}
 
 
-def test_applying_a_damaged_ledger_fails_loudly(monkeypatch, tmp_path):
+def test_applying_a_damaged_ledger_fails_loudly(
+    synthetic_config_dir, monkeypatch, tmp_path
+):
     vehicles = _loaded_before_the_variable()
     _use_ledger(monkeypatch, tmp_path, text="[]")
     with pytest.raises(ValueError):

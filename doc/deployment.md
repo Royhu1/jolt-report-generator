@@ -68,9 +68,12 @@ first imported, which for `python -m report_generator.cli` is before `.env` is r
 Export `JOLT_CONFIG_DIR` and `JOLT_CACHE_DIR` in the process environment rather than
 relying on `.env` for them; from the Python API, set both before
 `import report_generator`. `JOLT_CAPACITY_LEDGER` may be set later, from `.env` or
-from code: every report re-applies the ledger when it starts
-(`JOLTReportGenerator.generate_report()`, and so `report_generator.generate_report()`
-and the CLI), before it reads the vehicle's capacity.
+from code, and a long-running process may point it at another file, or have the file
+edited, between two reports: every report reads the capacity state afresh when it
+starts (`JOLTReportGenerator.generate_report()`, and so
+`report_generator.generate_report()` and the CLI), before it reads the vehicle's
+capacity — the ledger's values, and the `vehicles.json` values for whatever the
+ledger does not carry. Nothing carries over from a ledger no longer named.
 
 ## Writable state — the capacity ledger
 

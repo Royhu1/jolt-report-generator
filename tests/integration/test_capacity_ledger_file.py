@@ -36,6 +36,7 @@ from report_generator.capacity import (
     _persist_effective_capacity,
 )
 from report_generator.columns import HEADERS, _row_col_index
+from report_generator.general_pipeline import is_runtime_config
 from report_generator.report_builder import _write_excel_report
 from report_generator.segmentation import constants
 
@@ -122,12 +123,12 @@ def test_persist_writes_the_vehicles_json_format(config_dir, ledger_path):
     assert text == json.dumps(_read(ledger_path), indent=2, ensure_ascii=False) + "\n"
 
 
-def test_a_first_write_is_seeded_from_the_in_memory_config(
+def test_a_first_write_is_seeded_from_vehicles_json_not_from_memory(
     config_dir, ledger_path, monkeypatch
 ):
-    # The in-memory entry (vehicles.json as loaded, with any overlay) is what a
-    # first ledger write continues from — here deliberately different from the
-    # file on disk, to show which one is used.
+    # The in-memory entry is deliberately different from the file on disk — as
+    # after an earlier report wrote into another ledger — to show which is used:
+    # what is written never depends on memory.
     monkeypatch.setitem(
         constants.VEHICLE_CONFIG,
         REG,
@@ -142,11 +143,11 @@ def test_a_first_write_is_seeded_from_the_in_memory_config(
     _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
     entry = _read(ledger_path)[REG]
     assert set(entry["effective_capacity_quarterly"]) == {
-        "20240701_20241001",
+        "20241001_20250101",
         "20250101_20250401",
     }
-    # (500*30 + 400*10) / 40 = 475.0
-    assert entry["effective_capacity_kwh"] == 475.0
+    # (300*10 + 400*10) / 20 = 350.0
+    assert entry["effective_capacity_kwh"] == 350.0
 
 
 def test_a_vehicle_absent_from_memory_is_seeded_from_vehicles_json(
@@ -164,8 +165,8 @@ def test_a_vehicle_absent_from_memory_is_seeded_from_vehicles_json(
 
 
 def test_a_seeded_history_is_copied_not_shared(config_dir, ledger_path):
-    # The seed is a copy: merging the new period into it must not reach back
-    # into the in-memory dict it was taken from.
+    # Merging the new period never reaches back into the history the in-memory
+    # config held: that dict is replaced by the merged one, not changed.
     seeded_from = constants.VEHICLE_CONFIG[REG]["effective_capacity_quarterly"]
     _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
     assert seeded_from == HISTORY
@@ -267,13 +268,91 @@ def test_the_merge_continues_what_the_loader_shows_the_reports(
         _write(ledger_path, {REG: ledger_entry})
     # What a report started now reads: vehicles.json with the ledger overlaid.
     loaded = configs.load_vehicle_configs()[REG]
-    monkeypatch.setitem(constants.VEHICLE_CONFIG, REG, copy.deepcopy(loaded))
     expected = {k: copy.deepcopy(loaded[k]) for k in configs.LEDGER_KEYS if k in loaded}
     _merge_period_capacity(expected, 400.0, 10, "20250101_20250401")
+    # Whatever memory holds — here another ledger's history — changes nothing.
+    monkeypatch.setitem(constants.VEHICLE_CONFIG, REG, copy.deepcopy(_STALE))
 
     _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
 
     assert _read(ledger_path)[REG] == expected
+
+
+# ── The ledger changes while the process runs ────────────────────────────────
+
+_STALE = {
+    "srf_reg": REG,
+    "effective_capacity_kwh": 450.0,
+    "effective_capacity_quarterly": {
+        "20240401_20240701": {"kwh": 450.0, "n": 20},
+        "20240701_20241001": {"kwh": 460.0, "n": 20},
+    },
+}
+_LEDGER_A = {
+    REG: {
+        "effective_capacity_kwh": 450.0,
+        "effective_capacity_quarterly": {"20240401_20240701": {"kwh": 450.0, "n": 20}},
+    }
+}
+
+
+def _report_start():
+    """What ``JOLTReportGenerator.generate_report`` does before it reads a config."""
+    configs.apply_capacity_ledger(constants.VEHICLE_CONFIG, skip=is_runtime_config)
+
+
+def _run_a_report_on_ledger_a(ledger):
+    """Report 1: ledger A holds its own history, and the report adds a period."""
+    _write(ledger, _LEDGER_A)
+    _report_start()
+    _persist_effective_capacity(REG, 460.0, 20, "charge", "20240701_20241001")
+    # Memory now holds ledger A's history, which vehicles.json does not have.
+    assert constants.VEHICLE_CONFIG[REG]["effective_capacity_quarterly"] == (
+        _STALE["effective_capacity_quarterly"]
+    )
+
+
+def _assert_report_2_continues_vehicles_json(ledger):
+    """Report 2 on a ledger holding only the scalar: vehicles.json's history."""
+    _report_start()
+    live = constants.VEHICLE_CONFIG[REG]
+    assert live["effective_capacity_kwh"] == 410.0
+    assert live["effective_capacity_quarterly"] == HISTORY
+
+    _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
+
+    entry = _read(ledger)[REG]
+    # vehicles.json's history plus the new period — none of ledger A's periods.
+    assert set(entry["effective_capacity_quarterly"]) == {
+        "20241001_20250101",
+        "20250101_20250401",
+    }
+    # (300*10 + 400*10) / 20 = 350.0
+    assert entry["effective_capacity_kwh"] == 350.0
+
+
+def test_a_ledger_named_later_never_receives_the_history_of_the_last(
+    config_dir, tmp_path, monkeypatch
+):
+    ledger_a = tmp_path / "a" / "capacity_ledger.json"
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(ledger_a))
+    _run_a_report_on_ledger_a(ledger_a)
+    a_after_report_1 = ledger_a.read_bytes()
+
+    ledger_b = tmp_path / "b" / "capacity_ledger.json"
+    _write(ledger_b, {REG: {"effective_capacity_kwh": 410.0}})
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(ledger_b))
+    _assert_report_2_continues_vehicles_json(ledger_b)
+
+    assert ledger_a.read_bytes() == a_after_report_1
+
+
+def test_a_ledger_edited_down_to_the_scalar_between_two_reports(
+    config_dir, ledger_path
+):
+    _run_a_report_on_ledger_a(ledger_path)
+    _write(ledger_path, {REG: {"effective_capacity_kwh": 410.0}})
+    _assert_report_2_continues_vehicles_json(ledger_path)
 
 
 def test_persist_keeps_every_other_ledger_entry(config_dir, ledger_path):

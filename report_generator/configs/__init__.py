@@ -22,12 +22,14 @@ Consumers read the configs through the loaders below, never by file path:
   get_capacity_ledger_path()  the external capacity-ledger file, or None
   load_vehicle_configs()      a fresh read of vehicles.json, ledger overlaid
   load_pipeline_configs()     a fresh read of pipelines.json
-  apply_capacity_ledger(v)    overlay the ledger again onto configs already loaded
+  apply_capacity_ledger(v)    bring the ledger keys of loaded configs up to date
 
 The package's shared ``VEHICLE_CONFIG`` is loaded once, at import, but the
-ledger variable is read whenever it is needed: every report re-applies the
-ledger to ``VEHICLE_CONFIG`` (:func:`apply_capacity_ledger`) before it reads the
-vehicle's config, so a variable set after the import is still honoured.
+ledger variable is read whenever it is needed: before it reads the vehicle's
+config, every report makes the ledger keys of ``VEHICLE_CONFIG`` exactly what a
+fresh :func:`load_vehicle_configs` gives (:func:`apply_capacity_ledger`), so a
+variable set after the import, pointed at another file or at an edited one is
+honoured, and nothing survives from a ledger the reports no longer read.
 
 Ledger file schema (one entry per registration; only the two ledger keys are
 read, and a key an entry does not carry leaves the ``vehicles.json`` value)::
@@ -40,6 +42,7 @@ read, and a key an entry does not carry leaves the ``vehicles.json`` value)::
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import stat
@@ -108,32 +111,47 @@ def load_vehicle_configs() -> dict:
     ledger file that does not exist yet means no overlay, not an error. Without
     the variable the result is exactly the parsed ``vehicles.json``.
     """
-    vehicles = _load_config_json("vehicles.json")
-    apply_capacity_ledger(vehicles)
-    return vehicles
+    return _load_vehicle_configs(get_capacity_ledger_path())
 
 
 def apply_capacity_ledger(
     vehicles: dict, *, skip: Callable[[dict], bool] | None = None
 ) -> Path | None:
-    """Overlay the capacity ledger onto vehicle configs that are already loaded.
+    """Bring the capacity state of vehicle configs already loaded up to date.
 
     ``vehicles`` maps each registration to its config dict — typically the
-    package's shared in-memory ``VEHICLE_CONFIG``, which is loaded once, at
-    import. The ledger file is looked up and read at call time, so a
-    ``JOLT_CAPACITY_LEDGER`` set after the import is honoured. The overlay is
-    the one :func:`load_vehicle_configs` applies — key by key, a registration
-    not in ``vehicles`` ignored — written in place into the per-registration
-    dicts, so applying it again is harmless. A config for which ``skip(cfg)`` is
-    true is left alone.
+    package's shared in-memory ``VEHICLE_CONFIG``, loaded once at import and
+    updated by every write-back since. When ``JOLT_CAPACITY_LEDGER`` names a
+    file (looked up at call time, so a variable set after the import counts),
+    the two ledger keys of each registration in ``vehicles`` that is also in
+    ``vehicles.json`` become exactly what a fresh :func:`load_vehicle_configs`
+    gives: the ledger entry's value where the entry carries the key, else the
+    ``vehicles.json`` value, else no key at all. That holds however the ledger
+    has changed in between — another file named, the file edited — so no value
+    survives from a ledger the reports no longer read.
 
-    Without the variable this is a strict no-op: nothing is read and
-    ``vehicles`` is not touched. Returns the ledger path applied, or ``None``.
+    The keys are set (as copies) or removed in place; the parameters are never
+    touched. A registration not in ``vehicles.json`` is left alone — the ledger
+    records state for configured vehicles only — and so is a config for which
+    ``skip(cfg)`` is true.
+
+    Without the variable this is a strict no-op: nothing is read, neither the
+    ledger nor ``vehicles.json``, and ``vehicles`` is not touched. Returns the
+    ledger path applied, or ``None``.
     """
     ledger_path = get_capacity_ledger_path()
     if ledger_path is None:
         return None
-    _overlay_capacity_ledger(vehicles, _read_capacity_ledger(ledger_path), skip=skip)
+    loaded = _load_vehicle_configs(ledger_path)
+    for reg, cfg in vehicles.items():
+        current = loaded.get(reg)
+        if current is None or (skip is not None and skip(cfg)):
+            continue
+        for key in LEDGER_KEYS:
+            if key in current:
+                cfg[key] = copy.deepcopy(current[key])
+            else:
+                cfg.pop(key, None)
     return ledger_path
 
 
@@ -159,13 +177,19 @@ def _load_config_json(name: str) -> dict:
         return json.load(f)
 
 
-def _overlay_capacity_ledger(
-    vehicles: dict, ledger: dict, *, skip: Callable[[dict], bool] | None = None
-) -> dict:
+def _load_vehicle_configs(ledger_path: Path | None) -> dict:
+    """:func:`load_vehicle_configs` for a given ledger file (``None``: none)."""
+    vehicles = _load_config_json("vehicles.json")
+    if ledger_path is not None:
+        _overlay_capacity_ledger(vehicles, _read_capacity_ledger(ledger_path))
+    return vehicles
+
+
+def _overlay_capacity_ledger(vehicles: dict, ledger: dict) -> dict:
     """Overlay the ledger keys onto ``vehicles`` in place; return ``vehicles``."""
     for reg, entry in ledger.items():
         cfg = vehicles.get(reg)
-        if cfg is None or (skip is not None and skip(cfg)):
+        if cfg is None:
             continue
         for key in LEDGER_KEYS:
             if key in entry:

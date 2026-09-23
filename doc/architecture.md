@@ -249,7 +249,7 @@ should read the configs — never by file path:
 | `load_pipeline_configs()` | a fresh read of `pipelines.json` |
 | `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
 | `get_config_path(name)` | the path of a config file in the active directory |
-| `apply_capacity_ledger(vehicles, skip=None)` | overlays the ledger again, in place, onto configs already loaded (typically `VEHICLE_CONFIG`) and returns its path; without the variable a strict no-op returning `None` |
+| `apply_capacity_ledger(vehicles, skip=None)` | makes the two ledger keys of configs already loaded (typically `VEHICLE_CONFIG`) what a fresh `load_vehicle_configs()` gives — for each registration also in `vehicles.json` and not skipped: the ledger's value, else the `vehicles.json` value, else no key — in place, and returns the ledger path; without the variable a strict no-op that reads nothing and returns `None` |
 
 `vehicles.json` holds two kinds of data. The **parameters** (everything below except
 the two ledger keys) are reviewed, tuned values that change only through a reviewed
@@ -260,14 +260,16 @@ a ledger-only registration ignored — and the write-back and the backfill write
 instead of `vehicles.json`.
 
 `VEHICLE_CONFIG` is loaded at import, but the ledger variable may be set after it (a
-`.env` loaded later). So `JOLTReportGenerator.generate_report()` — the entry point
-behind `report_generator.generate_report()` and the CLI, for EV and diesel alike —
-calls `apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the vehicle's config:
-the capacity a report reads comes from the ledger its write-back targets. A runtime
-fallback config is skipped (`skip=is_runtime_config`), since an un-onboarded vehicle
-takes no ledger state. Code that drives the segmentation directly
-(`run_segment_detection`, which reads the capacity seed too) and names the ledger
-after the import calls `apply_capacity_ledger(VEHICLE_CONFIG)` itself.
+`.env` loaded later), pointed at another file, or its file edited, while the process
+runs. So `JOLTReportGenerator.generate_report()` — the entry point behind
+`report_generator.generate_report()` and the CLI, for EV and diesel alike — calls
+`apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the vehicle's config: the
+capacity a report reads comes from the ledger its write-back targets, and nothing
+survives in memory from a ledger no longer named. A runtime fallback config is skipped
+(`skip=is_runtime_config`), since an un-onboarded vehicle takes no ledger state. Code
+that drives the segmentation directly (`run_segment_detection`, which reads the
+capacity seed too) and names the ledger after the import calls
+`apply_capacity_ledger(VEHICLE_CONFIG)` itself.
 
 ### `configs/vehicles.json`
 
@@ -412,7 +414,9 @@ target is `vehicles.json`, or the `JOLT_CAPACITY_LEDGER` file when that is set (
 call time); both targets share one merge function, so they cannot compute different
 numbers. A write into an external ledger merges into exactly what the reports read:
 each ledger key the vehicle's entry lacks (both, the first time) is seeded from the
-in-memory `VEHICLE_CONFIG` values, so its capacity history continues. The external
+vehicle's `vehicles.json` entry, read fresh, so its capacity history continues — never
+from the in-memory `VEHICLE_CONFIG`, which after a switch of ledgers can still hold
+another file's history, so nothing written depends on memory. The external
 ledger file is replaced atomically (`configs._write_capacity_ledger`: a temporary file
 beside it, fsynced, then `os.replace`, retried briefly on a `PermissionError`), so an
 interrupted write never truncates it; the bytes are those of a direct write, and the

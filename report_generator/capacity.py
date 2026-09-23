@@ -820,12 +820,13 @@ def _persist_to_capacity_ledger(
     overlays the ledger key by key, so a ledger key the vehicle's entry does not
     carry — every key, when it has no entry yet — reads as its ``vehicles.json``
     value. Each such key is therefore seeded, as a copy, from the vehicle's
-    in-memory ``VEHICLE_CONFIG`` values (``vehicles.json`` as loaded, with any
-    ledger overlay; the ``vehicles.json`` entry itself for a vehicle absent from
-    memory) before the merge. Switching a deployment to an external ledger thus
-    continues each vehicle's capacity history instead of restarting it, and an
-    entry holding only ``effective_capacity_kwh`` keeps the quarterly history
-    rather than collapsing the average onto the one new period.
+    ``vehicles.json`` entry, read fresh here, before the merge. The in-memory
+    ``VEHICLE_CONFIG`` is never the seed: after another ledger has been named, or
+    this one edited, it can still hold a history the reports no longer read, and
+    what is written must not depend on it. Switching a deployment to an external
+    ledger thus continues each vehicle's capacity history instead of restarting
+    it, and an entry holding only ``effective_capacity_kwh`` keeps the quarterly
+    history rather than collapsing the average onto the one new period.
     """
     import copy
 
@@ -845,12 +846,10 @@ def _persist_to_capacity_ledger(
     with _ledger_lock(ledger_path):
         ledger = _read_capacity_ledger(ledger_path, lock=False)
         entry = ledger.setdefault(reg, {})
-        missing = [key for key in LEDGER_KEYS if key not in entry]
-        if missing:
-            seed = VEHICLE_CONFIG.get(reg) or on_disk[reg]
-            for key in missing:
-                if key in seed:
-                    entry[key] = copy.deepcopy(seed[key])
+        seed = on_disk[reg]
+        for key in LEDGER_KEYS:
+            if key not in entry and key in seed:
+                entry[key] = copy.deepcopy(seed[key])
         old_val, quarterly, wavg, n_rel, n_sparse = _merge_period_capacity(
             entry, eff_cap, n_donors, period_key
         )
