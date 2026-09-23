@@ -22,6 +22,7 @@ import errno
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -608,6 +609,135 @@ def test_a_refused_write_over_a_read_only_ledger_leaves_no_temporary(
         assert _temporaries(tmp_path) == []
     finally:
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+# ── ... and the replace made durable on POSIX: the directory is fsynced ──────
+
+_DIRECTORY_FD = -2  # never a real descriptor
+
+
+class _OsSeenByConfigs:
+    """``os`` as ``configs`` sees it, on a chosen platform, one directory faked.
+
+    Installed as ``configs.os`` only, so nothing else in the process is patched.
+    Opening ``directory`` returns a fake descriptor, and the fsync and the close
+    of that descriptor are recorded; everything else is the real ``os``.
+    """
+
+    def __init__(self, name, directory, *, open_error=None, fsync_error=None):
+        self.name = name
+        self._directory = Path(directory)
+        self._open_error = open_error
+        self._fsync_error = fsync_error
+        self.calls = []
+
+    def __getattr__(self, attr):
+        return getattr(os, attr)
+
+    def open(self, path, flags, *args):
+        if Path(path) == self._directory:
+            self.calls.append(("open", flags))
+            if self._open_error is not None:
+                raise self._open_error
+            return _DIRECTORY_FD
+        return os.open(path, flags, *args)
+
+    def fsync(self, fd):
+        if fd != _DIRECTORY_FD:
+            return os.fsync(fd)
+        self.calls.append(("fsync",))
+        if self._fsync_error is not None:
+            raise self._fsync_error
+
+    def close(self, fd):
+        if fd != _DIRECTORY_FD:
+            return os.close(fd)
+        self.calls.append(("close",))
+
+
+def _seen_as(monkeypatch, name, directory, **errors):
+    seen = _OsSeenByConfigs(name, directory, **errors)
+    monkeypatch.setattr(configs, "os", seen)
+    real_replace = configs._replace_ledger_file
+
+    def replace(source, target):
+        seen.calls.append(("replace",))
+        return real_replace(source, target)
+
+    monkeypatch.setattr(configs, "_replace_ledger_file", replace)
+    return seen
+
+
+_DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+
+
+def test_on_posix_the_directory_is_fsynced_after_the_replace(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    seen = _seen_as(monkeypatch, "posix", tmp_path)
+    configs._write_capacity_ledger(path, _LEDGER)
+    assert seen.calls == [
+        ("replace",),
+        ("open", _DIRECTORY_FLAGS),
+        ("fsync",),
+        ("close",),
+    ]
+    assert json.loads(path.read_text(encoding="utf-8")) == _LEDGER
+
+
+def test_on_windows_the_directory_is_not_fsynced(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    seen = _seen_as(monkeypatch, "nt", tmp_path)
+    configs._write_capacity_ledger(path, _LEDGER)
+    assert seen.calls == [("replace",)]
+    assert json.loads(path.read_text(encoding="utf-8")) == _LEDGER
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [
+        # A file system that cannot fsync a directory ...
+        {"fsync_error": OSError(errno.EINVAL, "Invalid argument")},
+        # ... or will not open one.
+        {"open_error": PermissionError(errno.EACCES, "Permission denied")},
+    ],
+    ids=["fsync refused", "open refused"],
+)
+def test_a_refused_directory_fsync_does_not_fail_the_write(
+    tmp_path, monkeypatch, caplog, errors
+):
+    path = tmp_path / "ledger.json"
+    _direct_write(path, {"OLD01": {"effective_capacity_kwh": 1.0}})
+    seen = _seen_as(monkeypatch, "posix", tmp_path, **errors)
+
+    with caplog.at_level("DEBUG", logger="report_generator.configs"):
+        configs._write_capacity_ledger(path, _LEDGER)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == _LEDGER
+    assert _temporaries(tmp_path) == []
+    assert "not fsynced" in caplog.text
+    if "fsync_error" in errors:  # the descriptor it did open is closed again
+        assert seen.calls[-1] == ("close",)
+    else:
+        assert seen.calls == [("replace",), ("open", _DIRECTORY_FLAGS)]
+
+
+def test_a_failed_replace_fsyncs_no_directory(tmp_path, monkeypatch):
+    path = tmp_path / "ledger.json"
+    seen = _seen_as(monkeypatch, "posix", tmp_path)
+
+    def busy(source, target):
+        raise OSError(errno.EBUSY, "Device or resource busy")
+
+    monkeypatch.setattr(configs, "_replace_ledger_file", busy)
+    with pytest.raises(OSError, match="busy"):
+        configs._write_capacity_ledger(path, _LEDGER)
+    assert seen.calls == []
+
+
+def test_the_directory_fsync_runs_on_this_platform(tmp_path):
+    # The real call, unpatched: a no-op on Windows, a real directory fsync on
+    # POSIX (CI) — either way it never raises.
+    configs._fsync_directory(tmp_path)
 
 
 # ── The two write targets compute the same numbers ───────────────────────────

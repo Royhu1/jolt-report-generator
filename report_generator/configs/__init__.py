@@ -13,8 +13,8 @@ directory, and ``JOLT_CONFIG_DIR`` moves that whole directory. Setting
 ``JOLT_CAPACITY_LEDGER`` to the path of a JSON file separates the state from the
 parameters: the ledger keys are then read from that file (overlaid on
 ``vehicles.json``) and written to it, and ``vehicles.json`` is never written. The
-ledger file is never rewritten in place: each write replaces it atomically, so an
-interrupted write leaves the previous ledger whole.
+ledger file is never rewritten in place: each write replaces it atomically (and on
+POSIX durably), so an interrupted write leaves the previous ledger whole.
 
 Consumers read the configs through the loaders below, never by file path:
 
@@ -44,6 +44,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import logging
 import os
 import stat
 import tempfile
@@ -52,6 +53,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from filelock import FileLock, Timeout
+
+logger = logging.getLogger(__name__)
 
 CONFIGS_DIR: Path = Path(__file__).resolve().parent
 
@@ -254,11 +257,13 @@ def _write_capacity_ledger(path: Path, ledger: dict) -> None:
     replaces the ledger in a single ``os.replace``: a writer killed part-way, a
     full disk or an interrupted sync leaves the previous ledger whole, never a
     truncated file that the next read would reject, taking the capacity history
-    with it. The bytes are those of a direct write, and the ledger keeps its
-    permission bits (a new one gets those a direct write would have given it).
-    A replace refused with ``PermissionError`` is retried a few times; when it
-    still fails, or anything else goes wrong, the temporary file is removed and
-    the error raised.
+    with it. On POSIX the directory is then fsynced too, so a crash or power
+    loss after this returns cannot undo the replace. The bytes are those of a
+    direct write, and the ledger keeps its permission bits (a new one gets those
+    a direct write would have given it). A replace refused with
+    ``PermissionError`` is retried a few times; when it still fails, or anything
+    else goes wrong before it, the temporary file is removed and the error
+    raised.
     """
     path = Path(path)
     mode = _ledger_file_mode(path)
@@ -279,6 +284,7 @@ def _write_capacity_ledger(path: Path, ledger: dict) -> None:
             os.close(fd)
         _discard_temporary_file(tmp_name)
         raise
+    _fsync_directory(path.parent)
 
 
 def _ledger_file_mode(path: Path) -> int:
@@ -304,6 +310,30 @@ def _replace_ledger_file(source: str, target: Path) -> None:
             if attempt == _LEDGER_REPLACE_ATTEMPTS:
                 raise
             time.sleep(_LEDGER_REPLACE_DELAY_S)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a rename in ``directory`` durable: fsync the directory (POSIX only).
+
+    On POSIX a rename is recorded in the directory, which a crash can lose
+    unless the directory itself is flushed. Best effort: a file system that
+    cannot fsync a directory refuses with an ``OSError``, which is logged at
+    debug level and does not fail the write, since the replace itself has
+    already happened. Windows has no equivalent to call, so nothing happens there.
+    """
+    if os.name != "posix":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as exc:
+        logger.debug("capacity ledger directory %s not fsynced: %s", directory, exc)
+        return
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        logger.debug("capacity ledger directory %s not fsynced: %s", directory, exc)
+    finally:
+        os.close(fd)
 
 
 def _discard_temporary_file(name: str) -> None:

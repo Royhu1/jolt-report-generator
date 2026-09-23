@@ -418,8 +418,9 @@ vehicle's `vehicles.json` entry, read fresh, so its capacity history continues â
 from the in-memory `VEHICLE_CONFIG`, which after a switch of ledgers can still hold
 another file's history, so nothing written depends on memory. The external
 ledger file is replaced atomically (`configs._write_capacity_ledger`: a temporary file
-beside it, fsynced, then `os.replace`, retried briefly on a `PermissionError`), so an
-interrupted write never truncates it; the bytes are those of a direct write, and the
+beside it, fsynced, then `os.replace`, retried briefly on a `PermissionError`, then on
+POSIX the directory fsynced, best effort), so an interrupted write never truncates it
+and a returned one survives a crash; the bytes are those of a direct write, and the
 file keeps its permission bits. `capacity_backfill`
 reproduces the identical ledger from existing xlsx without re-running (it reads the
 `Battery Capacity`/`SOC Change`/`Energy Source` columns; the `=NA()` Stop cells read back

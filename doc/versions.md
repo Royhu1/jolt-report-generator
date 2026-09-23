@@ -655,7 +655,10 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   0.2 s apart while it is refused with `PermissionError` (Windows, while a sync client,
   an editor or a virus scanner holds the file). A kill, a full disk or an interrupted
   sync therefore leaves the previous ledger whole, and any failure removes the
-  temporary file. The bytes are exactly those of a direct write (`indent=2`,
+  temporary file. On POSIX the directory is then fsynced as well, so a crash or power
+  loss after the write-back has returned cannot lose the rename — best effort: a file
+  system that cannot fsync a directory is logged at debug level and the write stands.
+  Windows has no directory fsync and is unchanged. The bytes are exactly those of a direct write (`indent=2`,
   `ensure_ascii=False`, trailing newline), and the ledger keeps its permission bits (a
   new one gets those a direct write gives it). The backfill writes the ledger the same
   way.
@@ -700,7 +703,7 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   configs already loaded — a strict no-op without the variable that reads nothing, the
   loader's view in place, another ledger named or the file edited restoring every key
   it no longer carries, idempotent, copies, a registration not in `vehicles.json` and
-  a skipped config left alone); 42 integration tests of the write side (ledger written
+  a skipped config left alone); 48 integration tests of the write side (ledger written
   and `vehicles.json` untouched, the lock, seeding from the file and never from memory,
   merging into an existing entry, a partial entry continuing the history the reports
   read, the merge equal to the loader's view for every entry shape, a ledger named
@@ -709,7 +712,9 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   — a partial entry written out in full — the dry run, both targets producing the same
   entry, byte-for-byte for the unset path, and the atomic file write: a direct write's
   bytes and permission bits, a failure part-way leaving the old ledger whole, the
-  `PermissionError` retry and its limit, no temporary file left behind); 7 integration
+  `PermissionError` retry and its limit, no temporary file left behind, and on POSIX
+  the directory fsync after a successful replace, never on Windows and never failing
+  the write when the file system refuses it); 7 integration
   tests of the ledger read at report start (the EV and the diesel dispatch, the
   convenience function, a ledger changed between two reports — another file or the
   file edited — leaving no stale capacity, the strict no-op without the variable, a
@@ -744,4 +749,4 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
     fixtures added). The four original fixtures' heading columns predate the heading
     rule and are verbatim.
 
-  Full suite: **1177 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
+  Full suite: **1183 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).

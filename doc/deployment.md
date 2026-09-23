@@ -123,7 +123,10 @@ only needed to run with your own copy of `vehicles.json` / `pipelines.json`.
 - **The ledger file is replaced, never rewritten in place.** Each write goes to a
   temporary `<ledger>.<random>.tmp` beside it, is flushed to disk, and then replaces the
   ledger in one atomic rename, so a killed process, a full disk or an interrupted sync
-  leaves the previous ledger whole. The ledger keeps its permission bits. The rename
+  leaves the previous ledger whole. On POSIX the directory is flushed after the rename
+  as well, so a crash or power loss once a write-back has returned cannot undo it (best
+  effort: a file system that cannot flush a directory is logged at debug level and the
+  write-back still succeeds). The ledger keeps its permission bits. The rename
   needs the ledger's *directory* to be writable (as the lock file already does): mount
   a directory for it, not the single file, which cannot be replaced. On Windows a rename
   refused while another program (a sync client, an editor, a virus scanner) holds the
