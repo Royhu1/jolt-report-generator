@@ -223,7 +223,6 @@ def test_main_reads_a_capacity_ledger_named_only_in_dotenv(
     still be overlaid on the in-memory configs the report is generated from.
     """
     import json
-    import os
 
     from report_generator.segmentation import constants
 
@@ -239,7 +238,10 @@ def test_main_reads_a_capacity_ledger_named_only_in_dotenv(
     monkeypatch.delenv("JOLT_CAPACITY_LEDGER", raising=False)
 
     def load_dotenv(*_args, **_kwargs):  # what a .env line would do
-        os.environ["JOLT_CAPACITY_LEDGER"] = str(ledger)
+        # Through monkeypatch, so the variable is removed again after the test
+        # (a direct os.environ write would outlive it and redirect every later
+        # capacity write-back of the session into this ledger).
+        monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(ledger))
         return True
 
     monkeypatch.setattr("dotenv.load_dotenv", load_dotenv)

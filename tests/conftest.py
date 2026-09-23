@@ -20,7 +20,10 @@ imported):
 3. ``JOLT_CAPACITY_LEDGER`` is removed. ``VEHICLE_CONFIG`` overlays that file at
    import, and the capacity write-back targets it, so a value inherited from the
    developer's shell would both change what the suite reads and let a test write
-   into a real ledger. A test that exercises the ledger sets it on ``tmp_path``.
+   into a real ledger. A test that exercises the ledger sets it on ``tmp_path``,
+   through ``monkeypatch``; a test that leaves it set behind it fails (see
+   ``_no_capacity_ledger_left_behind``), since every later write-back of the
+   session would otherwise land in that test's ledger.
 
 The rest of the file provides the shared fixtures: the fixture directory, the
 raw-telematics / logger loaders (matching production's ``read_csv`` options
@@ -56,6 +59,25 @@ os.environ.pop("JOLT_CAPACITY_LEDGER", None)
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook
     """Remove the throwaway cache directory created at import time."""
     shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_capacity_ledger_left_behind():
+    """Fail a test that leaves ``JOLT_CAPACITY_LEDGER`` set after it.
+
+    Torn down after the test's own ``monkeypatch`` has been undone, so a variable
+    set through ``monkeypatch`` is already gone; one written to ``os.environ``
+    directly is still there, would silently redirect the capacity write-back of
+    every later test in the session, and makes the outcome depend on test order.
+    It is removed, and the test that left it fails.
+    """
+    yield
+    leaked = os.environ.pop("JOLT_CAPACITY_LEDGER", None)
+    if leaked is not None:
+        pytest.fail(
+            f"the test left JOLT_CAPACITY_LEDGER={leaked!r} set; set it with "
+            "monkeypatch.setenv so it is removed again"
+        )
 
 
 # ── Offline guarantee ────────────────────────────────────────────────────────
