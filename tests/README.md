@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~45 s, 1084 tests, fully offline
+pytest                       # ~60 s, 1122 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -40,8 +40,8 @@ The five contract files directly under `tests/` predate this suite.
 | Area | Tests |
 |------|-------|
 | Existing contract suite (`tests/*.py`) | 254 |
-| `unit/` | 582 |
-| `integration/` | 248 |
+| `unit/` | 604 |
+| `integration/` | 264 |
 
 ## The offline guarantee
 
@@ -93,17 +93,20 @@ the live configs' schema, and it asserts only structure, never values.)
 
 ## Golden files
 
-`tests/integration/test_segmentation_fixtures.py` and
-`test_diesel_pipeline_fixture.py` compare every field of every produced segment
-against frozen JSON snapshots in `tests/fixtures/expected/`. Regenerate with:
+`tests/integration/test_registered_fixtures.py` compares every field of every
+produced segment of every fixture registered in `tests/fixtures/raw_fixtures.json`
+against its frozen JSON snapshot in `tests/fixtures/expected/`;
+`test_segmentation_fixtures.py` and `test_diesel_pipeline_fixture.py` add
+hand-written expectations for the four original fixtures. Regenerate with:
 
 ```bash
-python tests/fixtures/regenerate_goldens.py
+python tests/fixtures/regenerate_goldens.py [--alias ALIAS]
 ```
 
 Only do that when a behaviour change is **intended**, and review the diff — the
 goldens exist precisely so that an unintended change to the segmentation maths
-cannot pass unnoticed. Full details in `tests/fixtures/README.md`.
+cannot pass unnoticed. A newly onboarded vehicle gets its own fixture with
+`tests/fixtures/make_fixture.py`. Full details in `tests/fixtures/README.md`.
 
 ## Coverage
 

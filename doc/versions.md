@@ -671,5 +671,27 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   into an existing entry, the membership rule, the no-donor no-op, backfill into the
   ledger, the dry run, and both targets producing the same entry, byte-for-byte for the
   unset path), plus 2 CLI tests (a ledger named only in `.env` is read before the
-  generator is built; without the variable the configs are left alone). Full suite:
-  **1079 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).
+  generator is built; without the variable the configs are left alone).
+- **Repository tooling** (no effect on the package or on any report):
+  - CI — `.github/workflows/tests.yml` runs the offline suite on ubuntu / Python 3.11,
+    from a clean install of the two requirements files, on every push and pull request.
+  - `doc/versions.md` discipline — a test requires every `## X.Y.Z` heading to be
+    SemVer, ascending, newest last, and the last one to equal `__version__`; with the
+    namespace test it is what enforces "bump the version, append its section, state
+    its data namespace" in one change.
+  - A fixture per onboarded vehicle — `tests/fixtures/make_fixture.py` turns a
+    `--debug` raw artefact into an anonymised fixture (rigid spherical rotation of every
+    GPS position onto (0.5, 0.5) by an unrecorded random angle, headings turned with
+    it, driver columns dropped, vehicle identity replaced by the alias, everything
+    else verbatim; it refuses to write while the registration survives anywhere),
+    registers it in `tests/fixtures/raw_fixtures.json` and adds its frozen config;
+    `regenerate_goldens.py --alias` writes its first golden; and
+    `integration/test_registered_fixtures.py` guards every registered fixture — golden,
+    determinism, consumer contract, de-identification, registry consistency. Tried end
+    to end on a real EV telematics file and a real SRFLOGGER_V2 logger file in a
+    scratch clone (geodesic step distances preserved to 1e-12 km, headings consistent
+    with the rotated track, registration absent, the full suite green with both
+    fixtures added). The four original fixtures' heading columns predate the heading
+    rule and are verbatim.
+
+  Full suite: **1118 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).

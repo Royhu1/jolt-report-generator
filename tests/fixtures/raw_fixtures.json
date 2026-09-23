@@ -1,0 +1,18 @@
+{
+  "EVSPD01": {
+    "path": "raw/EVSPD01/raw_2025-06-27_0000.csv",
+    "kind": "ev"
+  },
+  "EVSOC01": {
+    "path": "raw/EVSOC01/raw_2026-04-24_0000.csv",
+    "kind": "ev"
+  },
+  "EVMAD01": {
+    "path": "raw/EVMAD01/raw_2025-07-29_0000.csv",
+    "kind": "ev"
+  },
+  "DSL01": {
+    "path": "raw/DSL01/logger_2025-10-07_0000.csv",
+    "kind": "diesel"
+  }
+}

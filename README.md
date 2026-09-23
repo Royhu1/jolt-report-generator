@@ -27,7 +27,7 @@ doc/
 tests/                     # offline test suite (no network, no API key needed)
 ├── unit/                  # pure functions, hand-computed expectations
 ├── integration/           # multi-module runs over anonymised real telematics
-└── fixtures/              # the anonymised CSVs, frozen configs and golden snapshots
+└── fixtures/              # the anonymised CSVs, frozen configs, golden snapshots + the fixture maker
 ```
 
 ## Not a pip package
@@ -69,7 +69,7 @@ dropped into your environment's `site-packages`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # ~45 s, ~1080 tests, fully offline
+pytest                     # ~60 s, ~1120 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network and no writable state outside the temp directory:

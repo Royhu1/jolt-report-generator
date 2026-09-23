@@ -93,13 +93,22 @@ def _block_network():
 
 # ── Fixture data ─────────────────────────────────────────────────────────────
 
+#: The raw-fixture registry, ``alias -> {"path": <relative path>, "kind": "ev" |
+#: "diesel"}``. ``tests/fixtures/make_fixture.py`` appends an entry when a vehicle
+#: is onboarded; every registered fixture is guarded by
+#: ``integration/test_registered_fixtures.py``.
+FIXTURE_REGISTRY_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "raw_fixtures.json"
+)
+with open(FIXTURE_REGISTRY_PATH, encoding="utf-8") as _fh:
+    FIXTURE_REGISTRY: dict = json.load(_fh)
+
 #: Alias → relative path of the committed anonymised raw fixture.
-RAW_FIXTURES = {
-    "EVSPD01": "raw/EVSPD01/raw_2025-06-27_0000.csv",
-    "EVSOC01": "raw/EVSOC01/raw_2026-04-24_0000.csv",
-    "EVMAD01": "raw/EVMAD01/raw_2025-07-29_0000.csv",
-    "DSL01": "raw/DSL01/logger_2025-10-07_0000.csv",
-}
+RAW_FIXTURES = {alias: entry["path"] for alias, entry in FIXTURE_REGISTRY.items()}
+
+#: Alias → ``"ev"`` (raw telematics; segmentation golden) or ``"diesel"`` (SRF
+#: logger CSV; diesel-trip golden).
+FIXTURE_KINDS = {alias: entry["kind"] for alias, entry in FIXTURE_REGISTRY.items()}
 
 #: The per-alias leg suffix used when naming segmentation artefacts, derived
 #: from the fixture file name (``<date>_<leg index>``).
