@@ -20,7 +20,8 @@ The tool
    random rotation that is never printed, logged or stored; heading / bearing
    columns turned with it; every driver column dropped; the vehicle identity
    (``vehicleId``, a VIN column) replaced by the alias;
-4. refuses to write if the registration still appears anywhere in the output;
+4. refuses to write if the registration still appears anywhere in the output,
+   in any case and however it is split (:func:`registration_pattern`);
 5. writes ``tests/fixtures/raw/<ALIAS>/<file name>`` and registers it in
    ``tests/fixtures/raw_fixtures.json``;
 6. with ``--config-from <REG>``, adds the frozen config entry for the alias —
@@ -287,13 +288,33 @@ def driver_columns(columns) -> list[str]:
     return [c for c in columns if _DRIVER_COLUMN.search(str(c))]
 
 
-def registration_variants(registration: str) -> list[str]:
-    """The spellings a registration is found under (no space; UK-style spaced)."""
-    reg = re.sub(r"\s+", "", registration).upper()
-    variants = {reg}
-    if len(reg) == 7 and reg[:4].isalnum():
-        variants.add(f"{reg[:4]} {reg[4:]}")
-    return sorted(variants, key=len, reverse=True)
+#: What may stand between two characters of a registration where it is written
+#: out: white space other than a line break (space, tab, the no-break and the
+#: other Unicode spaces), an invisible zero-width character, a hyphen or dash, an
+#: underscore. Never a comma, a quote or a line break, so a match can never run
+#: across two CSV cells or two rows.
+_REGISTRATION_SEPARATOR = (
+    "["
+    "\t    -   　"  # spaces
+    "­​-‍⁠﻿"  # soft hyphen, zero-width characters
+    "_\\-‐-―−"  # underscore, hyphens and dashes
+    "]"
+)
+
+
+def registration_pattern(registration: str) -> re.Pattern[str]:
+    """A case-insensitive regex matching every written spelling of ``registration``.
+
+    Built from the compact registration's characters with an optional run of
+    separators between every two of them, so it finds the plate however it is
+    split — ``AB12 CDE`` (4+3), ``ABC 1234`` (3+4), ``A12 BCD`` (3+3) — or
+    hyphenated, underscored, spaced out or in any case.
+    """
+    compact = [ch for ch in registration if ch.isalnum()]
+    if not compact:
+        raise ValueError(f"registration {registration!r} has no letters or digits")
+    joiner = _REGISTRATION_SEPARATOR + "*"
+    return re.compile(joiner.join(re.escape(ch) for ch in compact), re.IGNORECASE)
 
 
 def anonymise(
@@ -315,9 +336,10 @@ def anonymise(
             out.loc[out[col] != "", col] = alias
     out = transform_positions(out, rng)
     if registration:
-        # Header, index and every cell: nothing may still carry the registration.
-        text = out.to_csv(index=True).upper()
-        if any(v in text for v in registration_variants(registration)):
+        # Header, index and every cell: nothing may still carry the
+        # registration, in any spelling.
+        text = out.to_csv(index=True)
+        if registration_pattern(registration).search(text):
             raise ValueError(
                 "the registration still appears in the anonymised data; refusing "
                 "to write the fixture (find the column carrying it and add it to "
@@ -327,11 +349,10 @@ def anonymise(
 
 
 def fixture_file_name(source: Path, alias: str, registration: str | None) -> str:
-    """The source file name, with any spelling of the registration replaced."""
-    name = source.name
-    for variant in registration_variants(registration) if registration else []:
-        name = re.sub(re.escape(variant), alias, name, flags=re.IGNORECASE)
-    return name
+    """The source file name, with every spelling of the registration replaced."""
+    if not registration:
+        return source.name
+    return registration_pattern(registration).sub(lambda _match: alias, source.name)
 
 
 def infer_registration(source: Path) -> str | None:

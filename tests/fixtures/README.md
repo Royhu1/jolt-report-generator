@@ -56,7 +56,12 @@ procedure `make_fixture.py` applies — nothing else is changed:
 - **Vehicle identity**: the registration is replaced by an alias in the file path, and
   the `vehicleId` and `VIN vehicle identification number` values by the alias. The
   aliases do not appear in the live `report_generator/configs/vehicles.json`. The tool
-  refuses to write a fixture in which the registration still appears anywhere.
+  refuses to write a fixture in which the registration still appears anywhere — in any
+  case, and however it is split: any run of spaces (including tabs and no-break
+  spaces), zero-width characters, hyphens, dashes or underscores between its
+  characters still counts (`ABC 1234`, `A12-BCD`, `ab12_cde`), so every UK plate
+  layout is caught. A comma or a line break does not, so two adjacent CSV cells never
+  read as a registration. The file name loses every such spelling too.
 - Everything else — timestamps, SOC, energy counters, odometer, mass, speed,
   altitude, weather — is **verbatim real data**, character for character. That is the
   point: the numbers the tests assert on are numbers the pipeline really produces in

@@ -694,7 +694,11 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
     `--debug` raw artefact into an anonymised fixture (rigid spherical rotation of every
     GPS position onto (0.5, 0.5) by an unrecorded random angle, headings turned with
     it, driver columns dropped, vehicle identity replaced by the alias, everything
-    else verbatim; it refuses to write while the registration survives anywhere),
+    else verbatim; it refuses to write while the registration survives anywhere, in
+    any case and however it is split — any run of spaces of any kind, zero-width
+    characters, hyphens, dashes or underscores between its characters, so the 3+4
+    and 3+3 plates are caught as well as the 4+3 ones, while two adjacent CSV cells
+    never are — and the file name loses every such spelling),
     registers it in `tests/fixtures/raw_fixtures.json` and adds its frozen config;
     `regenerate_goldens.py --alias` writes its first golden; and
     `integration/test_registered_fixtures.py` guards every registered fixture — golden,

@@ -11,7 +11,8 @@ suite's guard:
   consumer relies on (required keys, chronology, sign convention, allowed energy
   sources); a diesel fixture's trips match their golden;
 * the fixture is de-identified: no driver column, the vehicle identity is the
-  alias, and the alias is not a live registration;
+  alias, the alias is not a live registration, and no live registration appears
+  in the file or its path in any spelling;
 * the registry, the files on disk, the frozen configs and the goldens agree.
 
 The four original fixtures additionally carry hand-written expectations in
@@ -20,6 +21,7 @@ The four original fixtures additionally carry hand-written expectations in
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -31,6 +33,14 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 REGISTRY = json.loads((FIXTURES / "raw_fixtures.json").read_text(encoding="utf-8"))
 EV_ALIASES = sorted(a for a, e in REGISTRY.items() if e["kind"] == "ev")
 DIESEL_ALIASES = sorted(a for a, e in REGISTRY.items() if e["kind"] == "diesel")
+
+# The fixture maker's own spelling rule for a registration (it is a script, not
+# a package module, so it is loaded from its path).
+_MAKER_SPEC = importlib.util.spec_from_file_location(
+    "make_fixture", FIXTURES / "make_fixture.py"
+)
+_MAKER = importlib.util.module_from_spec(_MAKER_SPEC)
+_MAKER_SPEC.loader.exec_module(_MAKER)
 
 _DRIVER_COLUMN = re.compile(r"^driver\d*_|\bdriver \d+\b", re.IGNORECASE)
 
@@ -112,8 +122,17 @@ def test_the_fixture_is_de_identified(alias, frozen_config_data):
         if col in frame.columns:
             assert set(frame[col]) <= {alias, ""}, col
     # An alias is never a live registration, and its frozen config says so.
-    assert alias not in _load_config_json("vehicles.json")
+    live = _load_config_json("vehicles.json")
+    assert alias not in live
     assert frozen_config_data["vehicles"][alias]["srf_reg"] == alias
+    # No live registration survives in the file or its path, in any spelling:
+    # the maker's refusal rule, re-checked for every fixture on every run.
+    rel_path = REGISTRY[alias]["path"]
+    text = (FIXTURES / rel_path).read_text(encoding="utf-8")
+    for reg in live:
+        pattern = _MAKER.registration_pattern(reg)
+        assert not pattern.search(rel_path), reg
+        assert not pattern.search(text), reg
 
 
 # ── EV fixtures ──────────────────────────────────────────────────────────────

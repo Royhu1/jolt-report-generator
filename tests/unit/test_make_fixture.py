@@ -314,6 +314,60 @@ def test_a_registration_left_in_the_data_stops_the_fixture():
         mf.anonymise(source, alias=ALIAS, registration="YK73WFN")
 
 
+@pytest.mark.parametrize(
+    "registration, written",
+    [
+        # A 3+4 plate (Northern Ireland style) and 3+3 ones, as the fleet has.
+        ("CMZ6260", "cmz 6260"),
+        ("CMZ6260", "CMZ-6260"),
+        ("CMZ6260", "CMZ_6260"),
+        ("CMZ6260", "CMZ\t6260"),
+        ("CMZ6260", "CMZ 6260"),  # no-break space
+        ("CMZ6260", "CMZ  6260"),  # a doubled separator
+        ("N88GNW", "N88 GNW"),
+        ("N88GNW", "n88-gnw"),
+        ("T88RNW", "T88 RNW"),
+        # The current 4+3 format, and the compact form of a spaced argument.
+        ("YK73WFN", "yk73 wfn"),
+        ("YK73WFN", "yk73wfn"),
+        ("CMZ 6260", "CMZ6260"),
+    ],
+)
+def test_every_spelling_of_the_registration_stops_the_fixture(registration, written):
+    source = _ev_frame()
+    source.loc[3, "trigger_context"] = f"depot {written} bay 4"
+    with pytest.raises(ValueError, match="registration"):
+        mf.anonymise(source, alias=ALIAS, registration=registration)
+
+
+def test_a_registration_split_across_two_cells_is_not_found():
+    # Adjacent cells "CMZ" and "6260" are two values, not the registration.
+    frame = pd.DataFrame({"note": ["CMZ", "x"], "code": ["6260", "y"]})
+    out = mf.anonymise(frame, alias=ALIAS, registration="CMZ6260")
+    assert out.equals(frame)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "CMZ,6260",  # two CSV cells
+        '"CMZ","6260"',  # two quoted cells
+        "CMZ\n6260",  # two rows
+        "CMZ\r\n6260",
+        "CMZ 6261",  # a different plate
+        "CMZ 626",
+        "depot 6260 CMZ",
+    ],
+)
+def test_the_registration_pattern_matches_nothing_else(text):
+    assert mf.registration_pattern("CMZ6260").search(text) is None
+
+
+def test_a_registration_needs_letters_or_digits():
+    with pytest.raises(ValueError, match="no letters or digits"):
+        mf.registration_pattern(" - ")
+
+
 # ── Everything else verbatim ─────────────────────────────────────────────────
 
 
@@ -367,6 +421,22 @@ def test_the_file_name_loses_every_spelling_of_the_registration():
     assert mf.fixture_file_name(source, ALIAS, "YK73WFN") == (
         f"raw_{ALIAS}_2025-01-01_{ALIAS}.csv"
     )
+
+
+@pytest.mark.parametrize(
+    "name, registration, expected",
+    [
+        ("raw_N88 GNW_2025.csv", "N88GNW", f"raw_{ALIAS}_2025.csv"),
+        (
+            "logger_cmz-6260_2025-06-27_0001.csv",
+            "CMZ6260",
+            f"logger_{ALIAS}_2025-06-27_0001.csv",
+        ),
+        ("raw_2025-06-27_0003.csv", "N88GNW", "raw_2025-06-27_0003.csv"),
+    ],
+)
+def test_the_file_name_loses_a_plate_however_it_is_split(name, registration, expected):
+    assert mf.fixture_file_name(Path(name), ALIAS, registration) == expected
 
 
 _LIVE_PIPELINES = {"ut_speed_01": {"branch": "speed", "mass_agg": "iqr_median"}}
