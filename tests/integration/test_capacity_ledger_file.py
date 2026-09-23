@@ -14,6 +14,7 @@ also run side by side on the same inputs and compared.
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 
@@ -26,6 +27,7 @@ from report_generator.capacity import (
     _IDX_DISTANCE,
     _IDX_ESOURCE,
     _IDX_SOC_CHANGE,
+    _merge_period_capacity,
     _persist_effective_capacity,
 )
 from report_generator.columns import HEADERS, _row_col_index
@@ -51,14 +53,14 @@ PAYLOAD = {
 }
 
 
-def _make_config_dir(path, monkeypatch):
+def _make_config_dir(path, monkeypatch, payload=PAYLOAD):
     path.mkdir(parents=True)
-    (path / "vehicles.json").write_text(json.dumps(PAYLOAD, indent=2) + "\n", "utf-8")
+    (path / "vehicles.json").write_text(json.dumps(payload, indent=2) + "\n", "utf-8")
     (path / "pipelines.json").write_text("{}\n", "utf-8")
     monkeypatch.setenv("JOLT_CONFIG_DIR", str(path))
     # Mirror the file into the in-memory config the way a real run has it;
     # monkeypatch removes the aliases again at teardown.
-    for reg, cfg in PAYLOAD.items():
+    for reg, cfg in payload.items():
         monkeypatch.setitem(constants.VEHICLE_CONFIG, reg, json.loads(json.dumps(cfg)))
     return path
 
@@ -188,6 +190,85 @@ def test_an_existing_ledger_entry_is_merged_not_reseeded(
     assert set(quarterly) == {"20240101_20240401", "20250101_20250401"}
     # (420*20 + 480*20) / 40 = 450.0
     assert _read(ledger_path)[REG]["effective_capacity_kwh"] == 450.0
+
+
+def test_an_entry_holding_only_the_scalar_keeps_the_quarterly_history(
+    tmp_path, monkeypatch
+):
+    # The reports read this vehicle's quarterly history from vehicles.json: the
+    # ledger entry carries only the scalar, and the overlay is key by key.
+    two_periods = {
+        "20240701_20241001": {"kwh": 300.0, "n": 10},
+        "20241001_20250101": {"kwh": 900.0, "n": 2},  # sparse
+    }
+    payload = {
+        REG: {
+            "srf_reg": REG,
+            "nominal_kwh": 540,
+            "effective_capacity_kwh": 300.0,
+            "effective_capacity_quarterly": two_periods,
+        }
+    }
+    config = _make_config_dir(tmp_path / "configs", monkeypatch, payload)
+    ledger = tmp_path / "state" / "capacity_ledger.json"
+    monkeypatch.setenv("JOLT_CAPACITY_LEDGER", str(ledger))
+    _write(ledger, {REG: {"effective_capacity_kwh": 410.0}})
+    before = (config / "vehicles.json").read_bytes()
+
+    _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
+
+    entry = _read(ledger)[REG]
+    assert set(entry["effective_capacity_quarterly"]) == {
+        "20240701_20241001",
+        "20241001_20250101",
+        "20250101_20250401",
+    }
+    # Over the reliable periods only: (300*10 + 400*10) / 20 = 350.0 — not the
+    # new period alone (400.0), which is what a merge from nothing would give.
+    assert entry["effective_capacity_kwh"] == 350.0
+    # The sparse period is excluded from the average and backfilled to it.
+    assert entry["effective_capacity_quarterly"]["20241001_20250101"] == {
+        "kwh": 350.0,
+        "n": 2,
+    }
+    assert (config / "vehicles.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "ledger_entry",
+    [
+        None,  # no entry yet
+        {"effective_capacity_kwh": 410.0},
+        {
+            "effective_capacity_quarterly": {
+                "20240101_20240401": {"kwh": 420.0, "n": 20}
+            }
+        },
+        {
+            "effective_capacity_kwh": 420.0,
+            "effective_capacity_quarterly": {
+                "20240101_20240401": {"kwh": 420.0, "n": 20}
+            },
+        },
+        # A key the entry carries is used as it is, even when it is null.
+        {"effective_capacity_kwh": 410.0, "effective_capacity_quarterly": None},
+    ],
+    ids=["absent", "scalar-only", "quarterly-only", "full", "null-quarterly"],
+)
+def test_the_merge_continues_what_the_loader_shows_the_reports(
+    config_dir, ledger_path, monkeypatch, ledger_entry
+):
+    if ledger_entry is not None:
+        _write(ledger_path, {REG: ledger_entry})
+    # What a report started now reads: vehicles.json with the ledger overlaid.
+    loaded = configs.load_vehicle_configs()[REG]
+    monkeypatch.setitem(constants.VEHICLE_CONFIG, REG, copy.deepcopy(loaded))
+    expected = {k: copy.deepcopy(loaded[k]) for k in configs.LEDGER_KEYS if k in loaded}
+    _merge_period_capacity(expected, 400.0, 10, "20250101_20250401")
+
+    _persist_effective_capacity(REG, 400.0, 10, "charge", "20250101_20250401")
+
+    assert _read(ledger_path)[REG] == expected
 
 
 def test_persist_keeps_every_other_ledger_entry(config_dir, ledger_path):
@@ -371,6 +452,18 @@ def test_backfill_summaries_start_from_the_ledger_values(
     summaries = cb.main(["--report-db", str(_report_db(tmp_path))])
     (summary,) = [s for s in summaries if s["reg"] == REG]
     assert (summary["old_kwh"], summary["new_kwh"]) == (333.3, 400.0)
+
+
+def test_backfill_writes_a_partial_ledger_entry_out_in_full(
+    config_dir, ledger_path, tmp_path
+):
+    # The rebuild does not merge into the entry it finds: it replaces the
+    # history with the one reconstructed from the report library, so an entry
+    # holding only the scalar comes back with both keys — the vehicles.json
+    # path's result.
+    _write(ledger_path, {REG: {"effective_capacity_kwh": 333.3}})
+    cb.main(["--report-db", str(_report_db(tmp_path))])
+    assert _read(ledger_path)[REG] == _REBUILT
 
 
 def test_backfill_dry_run_writes_nothing(config_dir, ledger_path, tmp_path):

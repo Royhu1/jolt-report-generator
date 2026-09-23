@@ -399,7 +399,8 @@ reliable periods (`_recompute_weighted_capacity()`). Written only when the sourc
 `vehicles.json`, guarded by a `filelock.FileLock` so parallel runs cannot clobber. The
 target is `vehicles.json`, or the `JOLT_CAPACITY_LEDGER` file when that is set (read at
 call time); both targets share one merge function, so they cannot compute different
-numbers. A vehicle's first write into an external ledger seeds its entry from the
+numbers. A write into an external ledger merges into exactly what the reports read:
+each ledger key the vehicle's entry lacks (both, the first time) is seeded from the
 in-memory `VEHICLE_CONFIG` values, so its capacity history continues. `capacity_backfill`
 reproduces the identical ledger from existing xlsx without re-running (it reads the
 `Battery Capacity`/`SOC Change`/`Energy Source` columns; the `=NA()` Stop cells read back

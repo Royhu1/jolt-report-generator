@@ -99,9 +99,11 @@ only needed to run with your own copy of `vehicles.json` / `pipelines.json`.
   instead of being read as empty and overwritten.
 - **Starting a ledger.** An empty (or absent) ledger works: a vehicle's first
   write-back seeds its entry from the values in `vehicles.json`, so its capacity history
-  continues rather than restarting. To start from a known state instead, write the two
-  keys of every vehicle, taken from the `vehicles.json` you run with, into the file —
-  the reports are then exactly what they would be without the external ledger.
+  continues rather than restarting. An entry that carries only one of the two keys is
+  completed the same way, from the `vehicles.json` value the reports were reading for
+  the other. To start from a known state instead, write the two keys of every vehicle,
+  taken from the `vehicles.json` you run with, into the file — the reports are then
+  exactly what they would be without the external ledger.
 - The write-back is guarded by a `filelock.FileLock` on `<ledger>.lock` (in the
   default mode, `vehicles.json.lock`), and only ever adds/updates capacity fields from
   `charge`/`discharge` donor segments — fallback values are never written. Only a

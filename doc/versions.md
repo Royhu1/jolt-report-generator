@@ -637,15 +637,19 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
 - **Write-back** (`capacity._persist_effective_capacity`): with the variable set it writes
   the ledger under `<ledger>.lock`, creating the file and its directory on the first
   write, and only reads `vehicles.json` — for the unchanged membership rule that only a
-  vehicle in `vehicles.json` ever gets an entry. A vehicle without a ledger entry yet is
-  seeded from its in-memory `VEHICLE_CONFIG` values (the `vehicles.json` entry when it is
-  absent from memory), so switching a deployment over continues each vehicle's capacity
-  history instead of restarting it. Both targets share one merge function
-  (`_merge_period_capacity`).
+  vehicle in `vehicles.json` ever gets an entry. The period is merged into exactly what
+  the loader shows the reports: each ledger key the vehicle's entry lacks — both, when
+  it has no entry yet — is seeded from its in-memory `VEHICLE_CONFIG` values (the
+  `vehicles.json` entry when it is absent from memory), so switching a deployment over
+  continues each vehicle's capacity history instead of restarting it, and an entry that
+  holds only `effective_capacity_kwh` keeps the quarterly history the overlay was
+  showing instead of collapsing the average onto the new period. Both targets share
+  one merge function (`_merge_period_capacity`).
 - **Backfill** (`capacity_backfill`): with the variable set, the rebuilt entries are
   written into the ledger — exactly the entries the `vehicles.json` path would have
-  rewritten — every other ledger entry is kept, and `vehicles.json` is only read. The
-  summaries start from the ledger values. `--dry-run` writes nothing at all in this
+  rewritten, both keys in full, whatever the entry held before — every other ledger
+  entry is kept, and `vehicles.json` is only read. The summaries start from the ledger
+  values. `--dry-run` writes nothing at all in this
   mode, not even the lock file or the ledger's directory.
 - **The CLI honours a ledger named in `.env`.** `python -m report_generator.cli` imports
   the package — building `VEHICLE_CONFIG` — before `main()` loads `.env`, so a

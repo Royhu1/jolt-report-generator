@@ -814,11 +814,18 @@ def _persist_to_capacity_ledger(
     Same merge, same membership rule, a different file: the read-modify-write
     runs under ``<ledger>.lock``, the file (and its directory) is created on the
     first write, and ``vehicles.json`` is only read — for the membership check —
-    never written. A vehicle that has no ledger entry yet is seeded from its
+    never written.
+
+    The period is merged into exactly the history the reports read. The loader
+    overlays the ledger key by key, so a ledger key the vehicle's entry does not
+    carry — every key, when it has no entry yet — reads as its ``vehicles.json``
+    value. Each such key is therefore seeded, as a copy, from the vehicle's
     in-memory ``VEHICLE_CONFIG`` values (``vehicles.json`` as loaded, with any
     ledger overlay; the ``vehicles.json`` entry itself for a vehicle absent from
-    memory), so switching a deployment to an external ledger continues each
-    vehicle's capacity history instead of restarting it.
+    memory) before the merge. Switching a deployment to an external ledger thus
+    continues each vehicle's capacity history instead of restarting it, and an
+    entry holding only ``effective_capacity_kwh`` keeps the quarterly history
+    rather than collapsing the average onto the one new period.
     """
     import copy
 
@@ -837,11 +844,13 @@ def _persist_to_capacity_ledger(
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with _ledger_lock(ledger_path):
         ledger = _read_capacity_ledger(ledger_path, lock=False)
-        entry = ledger.get(reg)
-        if entry is None:
+        entry = ledger.setdefault(reg, {})
+        missing = [key for key in LEDGER_KEYS if key not in entry]
+        if missing:
             seed = VEHICLE_CONFIG.get(reg) or on_disk[reg]
-            entry = {k: copy.deepcopy(seed[k]) for k in LEDGER_KEYS if k in seed}
-            ledger[reg] = entry
+            for key in missing:
+                if key in seed:
+                    entry[key] = copy.deepcopy(seed[key])
         old_val, quarterly, wavg, n_rel, n_sparse = _merge_period_capacity(
             entry, eff_cap, n_donors, period_key
         )
