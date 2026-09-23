@@ -88,7 +88,10 @@ def test_stop_tolerates_surrounding_whitespace():
 def test_row_col_index_drops_the_leg_number_column():
     assert HEADERS[0] == "Leg Number"
     assert _row_col_index("Leg Type") == 0
-    assert _row_col_index("Operator") == len(HEADERS) - 2
+    # The last EV header maps to the last row slot: the row tuple is HEADERS
+    # minus the leading 'Leg Number', so it is one shorter.
+    assert HEADERS[-1] == "EP Confidence Reason"
+    assert _row_col_index("EP Confidence Reason") == len(HEADERS) - 2
 
 
 def test_row_col_index_supports_the_diesel_layout():

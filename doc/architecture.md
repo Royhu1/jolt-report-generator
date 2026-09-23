@@ -84,6 +84,7 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 ├── diesel_pipeline.py             # process_diesel_leg() — SRFLOGGER_V1 Logger-only path (fuel_type=="DIESEL")
 ├── pedal_histogram.py             # accelerator/brake pedal position histograms
 ├── energy_correction.py           # battery_elevation_energy_kwh() — battery-side elevation energy at a symmetric efficiency
+├── ep_confidence.py               # EP-confidence grading: attach_ep_audits() (segmentation-side measurement) + assess_ep_confidence() / regrade_rows() (the single rule engine)
 ├── paths.py                       # get_cache_dir() / get_srf_api_root() / default_report_root() — env-overridable roots
 ├── cli.py                         # module CLI entry point (python -m report_generator.cli; argparse main())
 ├── xlsx_patch_common.py           # shared patcher scaffolding: make_srf_client + filename/cell/timestamp helpers
@@ -97,9 +98,9 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 ├── excel_writer.py                # _write_na, _write_excel_report (report/graphs/definitions sheets)
 ├── report_builder.py              # FACADE re-exporting the four modules above (flat import path)
 ├── segment_algorithms.py          # FACADE re-exporting the whole segmentation/ surface (flat import path)
-├── configs/                       # shared config (accessed via get_config_path(); JOLT_CONFIG_DIR override)
-│   ├── __init__.py                # get_config_path() — honours env JOLT_CONFIG_DIR, else this directory
-│   ├── vehicles.json              # per-vehicle parameters + the effective-capacity ledger (written back)
+├── configs/                       # shared config (JOLT_CONFIG_DIR override; external ledger via JOLT_CAPACITY_LEDGER)
+│   ├── __init__.py                # get_config_path() / get_capacity_ledger_path() + the public loaders load_vehicle_configs() (ledger overlaid) / load_pipeline_configs()
+│   ├── vehicles.json              # per-vehicle parameters + the effective-capacity ledger (written back unless JOLT_CAPACITY_LEDGER is set)
 │   └── pipelines.json             # named segmentation parameter sets
 ├── segmentation/                  # unified charge/discharge segmentation sub-package (EV path)
 │   ├── constants.py               # column-name constants + THE single VEHICLE_CONFIG / PIPELINE_CONFIGS load
@@ -143,7 +144,8 @@ generate_report(reg, date_start, date_end)
   ├─ _process_fps_legs(...)                 → per FPS leg: run_segment_detection() → _seg_to_row() (HEADERS)
   ├─ _reclassify_home_charging(...)         → relabel Away→Home charges within 0.5 km of the home point
   ├─ _finalize_rows(...)                    → _correct_effective_capacity() (EV) + non-discharge EP scrub
-  │                                            + per-period capacity + _insert_stop_rows()
+  │                                            + per-period capacity + regrade_rows() (EP confidence)
+  │                                            + _insert_stop_rows()
   └─ _write_outputs(...)                    → _persist_effective_capacity() + _write_excel_report()
                                                + [EV,non-fast] ChargerPatcher → LoggerPatcher
                                                + [debug] raw artefacts only (no figures / inspect HTML)
@@ -196,17 +198,18 @@ as a fallback.
 | `_generator.py` | orchestrates fetch → segment → correct → write; EV / `is_diesel` branch switch; un-onboarded regs → general fallback |
 | `data_fetcher.py` | `fetch_events()` — SRF legs + charging events; `date_end` inclusive |
 | `general_pipeline.py` | general fallback for un-onboarded regs: SRF-registration spacing resolution, EV column auto-detection, runtime-config assembly (`build_runtime_vehicle_config()`), `VehicleNotFoundError` |
-| `segmentation/` | unified charge/discharge segmentation (SOC + speed detection, mass cluster/merge/split, energy-source cascade); `run_segment_detection()` is the entry point (paints figures only via an external `figure_hook`) |
+| `segmentation/` | unified charge/discharge segmentation (SOC + speed detection, mass cluster/merge/split, energy-source cascade); `run_segment_detection()` is the entry point (paints figures only via an external `figure_hook`, and attaches each discharge segment's `ep_audit` once the anchors are final) |
 | `segment_algorithms.py` | facade re-exporting the whole `segmentation/` surface (public + internally-used privates) on the flat import path |
 | `capacity.py` | effective-capacity post-processing `_correct_effective_capacity()`, ledger persistence `_persist_effective_capacity()`, donor helpers; also re-exposed as `JOLTReportGenerator` staticmethods |
 | `diesel_pipeline.py` | `process_diesel_leg()` — SRFLOGGER_V1 channels → diesel rows |
 | `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan` |
 | `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows` |
 | `energy_correction.py` | `battery_elevation_energy_kwh()` — battery-side energy of a net elevation change (`ELEVATION_ENERGY_EFFICIENCY = 0.90`); shared by `row_builder` and `capacity` so both corrected-EP paths agree |
+| `ep_confidence.py` | per-row EP-confidence grading — `attach_ep_audits()` measures the diagnostics in the segmentation layer (it needs the counter anchors), `assess_ep_confidence()` is the single rule engine, `regrade_rows()` is the authoritative final pass |
 | `charts.py` | `CHART_SPECS_EV`/`CHART_SPECS_DIESEL` + `CHART_STYLE` (fixed-axis chart specs) |
 | `excel_writer.py` | `_write_na()` (=NA() contract), `_write_excel_report()` (report/graphs/definitions sheets) |
 | `report_builder.py` | facade re-exporting `columns`/`charts`/`row_builder`/`excel_writer` on the flat import path |
-| `operators.py` | `derive_leg_operator()` — per-leg `Operator` code from the SRF cascade |
+| `operators.py` | `derive_leg_operator()` — per-leg `Operator` code from the SRF cascade; its module docstring is the single source of truth for the cascade and the curated `KNOWN_OPERATOR_CODES` set (one code per company; an uncurated token still reaches the cell but raises a WARN) |
 | `pedal_histogram.py` | EEC2 accelerator / EBC1 brake pedal histograms (discharge, distance > 10 km) |
 | `charger_patcher.py` / `logger_patcher.py` | EV post-write backfill of Charger Link / Logger Link + weather + mass |
 | `weather_patcher.py` / `weather_patch.py` / `weather_fetcher/` | coarse (default) + fine (opt-in) OpenWeather patching |
@@ -222,7 +225,8 @@ repo-root run:
 |----------|---------|---------|
 | `SRF_API_KEY` | SRF platform API key (required to fetch) | — (CLI fails fast, rc 2) |
 | `OPENWEATHER_API_KEYS` | comma-separated OpenWeather keys (weather post-step only) | — (weather skipped) |
-| `JOLT_CONFIG_DIR` | directory holding `vehicles.json` + `pipelines.json`; **also where the capacity ledger is written back** | the vendored `configs/` dir |
+| `JOLT_CONFIG_DIR` | directory holding `vehicles.json` + `pipelines.json`; also where the capacity ledger is written back when `JOLT_CAPACITY_LEDGER` is unset | the vendored `configs/` dir |
+| `JOLT_CAPACITY_LEDGER` | path of an external capacity-ledger JSON file: the ledger keys are overlaid from it at load and again when each report starts, and written back to it, and `vehicles.json` is never written | — (ledger kept in `vehicles.json`) |
 | `JOLT_CACHE_DIR` | cache root (`srf_http/`, `srf_raw/`, weather, postcode) | `./cache` |
 | `SRF_API_ROOT` | SRF REST API root | `https://data.csrf.ac.uk/api/` |
 | `WEATHER_CACHE_FILE` / `WEATHER_CACHE_FILE_FINE` | override the coarse / fine weather cache file paths | `<cache>/.weather_cache.json` / `<cache>/weather/.weather_cache_fine.json` |
@@ -235,7 +239,37 @@ to an empty config.
 
 `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` are loaded **once** in `segmentation/constants.py`
 and shared by reference across the package (a single load site; object identity is a
-maintained invariant — see the import test).
+maintained invariant — see the import test). They are built through the public loaders
+in `report_generator.configs`, which are also the way any consumer outside the package
+should read the configs — never by file path:
+
+| Loader | Returns |
+|--------|---------|
+| `load_vehicle_configs()` | a fresh read of `vehicles.json` with the capacity ledger overlaid when `JOLT_CAPACITY_LEDGER` is set (without it: exactly the parsed file) |
+| `load_pipeline_configs()` | a fresh read of `pipelines.json` |
+| `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
+| `get_config_path(name)` | the path of a config file in the active directory |
+| `apply_capacity_ledger(vehicles, skip=None)` | makes the two ledger keys of configs already loaded (typically `VEHICLE_CONFIG`) what a fresh `load_vehicle_configs()` gives — for each registration also in `vehicles.json` and not skipped: the ledger's value, else the `vehicles.json` value, else no key — in place, and returns the ledger path; without the variable a strict no-op that reads nothing and returns `None` |
+
+`vehicles.json` holds two kinds of data. The **parameters** (everything below except
+the two ledger keys) are reviewed, tuned values that change only through a reviewed
+edit. The **capacity ledger** (`effective_capacity_kwh` + `effective_capacity_quarterly`,
+`configs.LEDGER_KEYS`) is machine-written state. With `JOLT_CAPACITY_LEDGER` set the
+ledger lives in its own file — overlaid key by key on the registrations present in both,
+a ledger-only registration ignored — and the write-back and the backfill write that file
+instead of `vehicles.json`.
+
+`VEHICLE_CONFIG` is loaded at import, but the ledger variable may be set after it (a
+`.env` loaded later), pointed at another file, or its file edited, while the process
+runs. So `JOLTReportGenerator.generate_report()` — the entry point behind
+`report_generator.generate_report()` and the CLI, for EV and diesel alike — calls
+`apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the vehicle's config: the
+capacity a report reads comes from the ledger its write-back targets, and nothing
+survives in memory from a ledger no longer named. A runtime fallback config is skipped
+(`skip=is_runtime_config`), since an un-onboarded vehicle takes no ledger state. Code
+that drives the segmentation directly (`run_segment_detection`, which reads the
+capacity seed too) and names the ledger after the import calls
+`apply_capacity_ledger(VEHICLE_CONFIG)` itself.
 
 ### `configs/vehicles.json`
 
@@ -246,21 +280,46 @@ Each vehicle entry:
 | `srf_reg` | `str` | **required** — registration in the SRF API (e.g. `"KY24 LHT"`) |
 | `nominal_kwh` | `float` | manufacturer nominal battery capacity (kWh); sets the effective-capacity validity range (`nominal × 0.5 … 2.0`) |
 | `srf_capacity_kwh` | `float` | SRF-registered capacity (API `fuel_capacity`); ultimate fallback for effective capacity + SOC estimate |
-| `effective_capacity_kwh` | `float\|null` | donor-count-weighted average over all reliable periods of `effective_capacity_quarterly` (`Σ(kwh·n)/Σn`, reliable = `n ≥ MIN_DONORS`); maintained by `_persist_effective_capacity()` / `capacity_backfill` |
-| `effective_capacity_quarterly` | `dict\|absent` (EV) | per-period ledger `{"YYYYMMDD_YYYYMMDD": {"kwh", "n"}}`; `n` = donor count. Sparse periods (`n < MIN_DONORS`=5) are excluded from the average and their `kwh` back-filled to it |
+| `effective_capacity_kwh` | `float\|null` | **ledger key**: donor-count-weighted average over all reliable periods of `effective_capacity_quarterly` (`Σ(kwh·n)/Σn`, reliable = `n ≥ MIN_DONORS`); maintained by `_persist_effective_capacity()` / `capacity_backfill` — here, or in the `JOLT_CAPACITY_LEDGER` file, which then overrides it |
+| `effective_capacity_quarterly` | `dict\|absent` (EV) | **ledger key**: per-period ledger `{"YYYYMMDD_YYYYMMDD": {"kwh", "n"}}`; `n` = donor count. Sparse periods (`n < MIN_DONORS`=5) are excluded from the average and their `kwh` back-filled to it |
 | `soc_energy_fallback` | `bool` (optional, EV) | opt-in: in the ±1σ step-2 outlier pass, re-derive a counter-sourced outlier's energy from ΔSOC×capacity when the dual-gate fires (see capacity model). Off by default |
-| `make` / `model` | `str` | manufacturer / model |
+| `make` / `model` | `str` | manufacturer / model. `model` mirrors the SRF platform string by default — see the note below the table for the rule and its deliberate exceptions |
+| `description` | `str\|null` | the SRF platform's own free-text vehicle description, copied verbatim from the API (e.g. `"2024 Volvo artic"`); display / provenance only — no code branches on it. `null` where SRF has none |
+| `vin` | `str\|null` | vehicle identification number; display / provenance only (it is the evidence behind a `model` deviation) — no code reads it |
 | `pipeline` | `str` | key into `pipelines.json` (EV); diesel uses the `daf_diesel_logger` dispatch marker (not a pipelines.json key) |
 | `mass_agg` | `str` (optional) | per-vehicle mass-aggregation override; takes precedence over the pipeline value |
 | `speed_col` | `str` | speed column (`"wheel_based_speed"` / `"speed"`) |
 | `ac_col` / `dc_col` / `total_energy_col` / `moving_energy_col` | `str` | telematics energy counter columns (some may be absent, e.g. Mercedes SOC-only) |
-| `mass_col` | `str` | vehicle-mass column |
+| `mass_col` | `str` | telematics vehicle-mass column, read by both the mass clustering and the `Vehicle Mass (kg)` cell. Pointing it at a name the feed does not carry is the supported way to reject a mislabelled GCVW signal: the segmentation layer then falls back to the Logger CVW, and the cell is left empty for `LoggerPatcher` to fill from the Logger |
 | `altitude_col` | `str` | altitude column for elevation-corrected EP |
 | `min_cluster_gap_kg` | `float` | minimum mass-clustering gap for `merge_discharge_by_mass()` |
 | `split_long_stops_min` | `float` (optional) | refuse to merge same-mass trips separated by a stop ≥ this many minutes |
 
+**How `model` is set.** SRF is the **default** source and its string is copied verbatim,
+including terse platform values (`"XD"`, `"P410"`) — they are never dressed up into marketing
+names. SRF is not, however, the last word: where the **VIN, a manufacturer build card or the
+DVLA record** contradicts it, the better evidence wins and the deviation is recorded below
+with that evidence. `make` is out of scope: it keeps its local form (`"Renault"` where SRF
+says `"Renault Trucks"`).
+
+Current deviations from the SRF string — **all deliberate, do not "correct" them towards SRF**:
+
+| Vehicle | Config holds | SRF says | Evidence for the config value |
+|---|---|---|---|
+| EV73SAL, YK73WFN | `FM Electric` | `FE Electric` | VIN prefix `YV2XB40A` is shared with the three AV24 tractors SRF itself labels `FM Electric`; an FE Electric (~27 t rigid) cannot be the 44 t `ARTIC` that SRF's own `type` and `weightClass` describe; and the DVLA record reads `FM ELECTRIC` |
+| KY24LHT | `FM Electric` | *(empty)* | SRF holds no model; mirroring the empty value would render every `make + model` string as "Volvo None". VIN is in the same `YV2XB40A` family |
+| EX74JXW | `G230` | `23P` | Build card gives chassis type `G 230E A4x2NB`; VIN `YS2G4X20…` carries a **G** in the cab-series position; DVLA reads `SCANIA G230` |
+| EX74JXY | `P230` | `23P` | Build card gives `P 230E A4x2NA`; VIN `YS2P4X20…`; DVLA reads `SCANIA P230` |
+| CMZ6260 | `FH Electric` | `FH` | DVLA reads `FH ELECTRIC`; the vehicle is a 378 kWh BEV, and the sibling Volvos are `FM Electric`, so the suffix carries real information |
+
+Any other field that differs from an external record is left as it is on purpose; check
+with the data owners before "fixing" a config field against the DVLA or a build card.
+
 **Diesel-only fields** (`fuel_type=="DIESEL"`): `weight_class_t` (**required**),
-`leg_source` (`"SRFLOGGER_V1"`), `fuel_energy_col`, `fuel_rate_col`, `distance_col`,
+`leg_source` (`"SRFLOGGER_V1"` / `"SRFLOGGER_V2"` — a documentation marker only: no code
+reads the key, and `_collect_legs` takes every leg whose `trip.source` starts with
+`SRFLOGGER`, so both versions are processed identically),
+`fuel_energy_col`, `fuel_rate_col`, `distance_col`,
 `diesel_lhv_kwh_per_l` (default 10.0), `speed_col_fallback`, `ambient_temp_col` —
 example under §Diesel pipeline.
 
@@ -284,9 +343,45 @@ include aux). `EP_exclude_aux = (propulsion − recuperation) / distance` (net t
 efficiency; needs both counters non-empty). Charge/Stop rows write NaN for these.
 
 The trailing EV columns are `… Propulsion Energy (kWh)` (48), `EP_exclude_aux` (49),
-`Operator` (50); diesel's trailing columns are `… Energy Source` and `Operator` (26).
-`Operator` is last in **both** sets, so every hardcoded patcher column index (≤ 48 for
-EV) is unaffected — this is the append-only column contract.
+`Operator` (50), `EP Confidence` (51), `EP Confidence Reason` (52); diesel's trailing
+columns are `… Energy Source` and `Operator` (26). `Operator` is last in the **diesel**
+set and the last column **shared** by both, and every hardcoded patcher column index
+(≤ 48 for EV) sits below the appended pair — this is the append-only column contract.
+
+#### EP confidence (`EP Confidence` / `EP Confidence Reason`)
+
+Every trip row carries a grade for its own `Energy Performance (kWh/km)` —
+`good` / `caution` / `poor` — plus the check codes and measured values behind it.
+Charge and Stop rows, and trips with no usable distance, are left **blank**: they state
+no EP, so there is nothing to grade. Diesel reports do not carry the pair (their energy
+comes from the LFC fuel counter, whose failure modes are different ones).
+
+The rules, their thresholds and the mechanism each one detects live in
+`ep_confidence.py`; the module docstring is the reference. In outline:
+
+| Group | Codes | Detects |
+|-------|-------|---------|
+| Energy provenance | `DUP_ENERGY`, `SPLIT_ALLOC`, `CAP_INCONS` | reported energy against the counter difference over the same anchor span, and against ΔSOC × effective capacity |
+| Attribution window | `ENERGY_WINDOW`, `IDLE_WINDOW`, `DIST_WINDOW`, `DIST_EXTRAP` | driving or standing time inside the counter's anchor window but outside the trip |
+| SOC signal | `SOC_RES`, `SOC_STEP` | ΔSOC too coarse to carry the energy; a single implausible SOC discontinuity carrying it |
+| Scale / plausibility | `SHORT_DIST`, `SPEED`, `EP_RANGE` | trips too short for EP to mean anything; impossible elapsed speed; the outcome backstop |
+
+Two properties are load-bearing. The grade is the **worst** finding, not an average — one
+decisive defect is not offset by other checks passing. And it measures **resolution and
+internal consistency, not provenance**: `Energy Source` already records provenance, so a
+well-resolved SOC-derived energy is graded `good` rather than penalised twice.
+
+Mechanically, the diagnostics are measured in the segmentation layer
+(`attach_ep_audits()`, called by `run_segment_detection()` after
+`_enforce_anchor_ordering`) because they are read off the counter anchors, which are
+stripped from the segment dict before the row builder sees it; they travel to the row on
+the segment's public `ep_audit` key and then, keyed by segment start time, to
+`_finalize_rows`. `_seg_to_row` writes a provisional grade so any direct caller gets one;
+`regrade_rows()` then re-grades every row once the capacity correction has settled the
+final energy source and an independent reference capacity exists, and that pass wins.
+The grade is a commentary on the reported numbers, not one of them: a failure anywhere in
+the measurement or grading path costs only the two confidence cells (logged as a warning),
+never the row or the report.
 
 #### Three-tier battery-capacity model
 
@@ -313,11 +408,24 @@ donor capacity `(kwh, n)` — from `_period_capacity_from_rows()` on the correct
 **before** Stop insertion — is merged into `effective_capacity_quarterly[period_key]`,
 then `effective_capacity_kwh` is recomputed as the donor-count-weighted average over
 reliable periods (`_recompute_weighted_capacity()`). Written only when the source is a
-`charge`/`discharge` donor (never a fallback), guarded by a `filelock.FileLock` so
-parallel runs cannot clobber. `capacity_backfill` reproduces the identical ledger from
-existing xlsx without re-running (it reads the `Battery Capacity`/`SOC Change`/`Energy
-Source` columns; the `=NA()` Stop cells read back as 0 and are dropped by the donor
-guard).
+`charge`/`discharge` donor (never a fallback) and only for a vehicle that is in
+`vehicles.json`, guarded by a `filelock.FileLock` so parallel runs cannot clobber. The
+target is `vehicles.json`, or the `JOLT_CAPACITY_LEDGER` file when that is set (read at
+call time); both targets share one merge function, so they cannot compute different
+numbers. A write into an external ledger merges into exactly what the reports read:
+each ledger key the vehicle's entry lacks (both, the first time) is seeded from the
+vehicle's `vehicles.json` entry, read fresh, so its capacity history continues — never
+from the in-memory `VEHICLE_CONFIG`, which after a switch of ledgers can still hold
+another file's history, so nothing written depends on memory. The external
+ledger file is replaced atomically (`configs._write_capacity_ledger`: a temporary file
+beside it, fsynced, then `os.replace`, retried briefly on a `PermissionError`, then on
+POSIX the directory fsynced, best effort), so an interrupted write never truncates it
+and a returned one survives a crash; the bytes are those of a direct write, and the
+file keeps its permission bits. `capacity_backfill`
+reproduces the identical ledger from existing xlsx without re-running (it reads the
+`Battery Capacity`/`SOC Change`/`Energy Source` columns; the `=NA()` Stop cells read back
+as 0 and are dropped by the donor guard), into the same target; `--dry-run` writes
+nothing.
 
 ### `configs/pipelines.json`
 
@@ -349,7 +457,9 @@ run_segment_detection
   ├─ cluster_mass_data → mass_cluster column
   ├─ split_discharge_by_mass  (split where the cluster label changes)
   ├─ merge_discharge_by_mass  (merge adjacent same-cluster; skipped when merge_by_mass=false)
-  └─ _enforce_anchor_ordering (post-pass: clamp energy anchors so anchor_end(i) ≤ start(i+1))
+  ├─ _enforce_anchor_ordering (post-pass: clamp energy anchors so anchor_end(i) ≤ start(i+1))
+  └─ attach_ep_audits         (measure each segment's EP-confidence diagnostics off the
+                               final anchors → the public ``ep_audit`` key; read-only)
 ```
 
 - **Charge (`find_charge_segments_by_soc`)**: detect rising-SOC blocks, merge blocks
@@ -371,7 +481,7 @@ column and the externally-rendered validation figure.
 
 ## Excel output
 
-**Report worksheet** — one segment per row, columns = `HEADERS` (EV, 50) / `DIESEL_HEADERS`
+**Report worksheet** — one segment per row, columns = `HEADERS` (EV, 52) / `DIESEL_HEADERS`
 (diesel, 26). Green = discharge trip, red = charge, white = Stop. Timestamps
 `yyyy-mm-dd hh:mm:ss`; durations `[hh]:mm:ss` (fractional days); SRF links are clickable
 hyperlinks. `Average Speed (km/h)` is odometer distance divided by the full elapsed
@@ -395,7 +505,8 @@ for EV, Fuel Consumption (0–60 L/100km) for diesel.
 **Leg types**: `In Transit` / charge (`AC`/`DC`/`Mix`/`estimated`) / `Stop`. Stop rows are
 synthesised by `_stop_row_from_neighbours` for gaps > 60 s between trip/charge (carrying
 mass / cumulative distance / SOC endpoints from the previous segment; the three EP columns
-are NaN), inserted **after** capacity correction.
+are NaN and the two EP-confidence cells blank), inserted **after** capacity correction and
+the final EP-confidence grading.
 
 ## SRF Logger data channels
 

@@ -33,6 +33,7 @@ CORE_MODULES = [
     "report_generator.operators",
     "report_generator.pedal_histogram",
     "report_generator.energy_correction",
+    "report_generator.ep_confidence",
     "report_generator.paths",
     "report_generator.cli",
     "report_generator.xlsx_patch_common",

@@ -9,12 +9,13 @@
 > Newest at the bottom. The current architecture is documented in
 > [architecture.md](architecture.md); this file is history only.
 >
-> Two notes on reading it. The entries are the upstream record kept **verbatim**, so
-> a section may name a path (`src/jolt_toolkit/…`, a data tree, a sibling tool) that
-> belongs to the JOLT research project this repository was extracted from — the
-> statement was true of the release it describes. And `__version__` tracks that
-> upstream code revision, not this repository's layout: moving the package to the
-> root is recorded in git, not as a release here.
+> Two notes on reading it. The entries up to and including 3.5.1 are the upstream
+> record kept **verbatim**, so a section may name a path (`src/jolt_toolkit/…`, a data
+> tree, a sibling tool) that belongs to the JOLT research project this repository was
+> extracted from — the statement was true of the release it describes. From 3.6.0 the
+> code is developed in this repository and its sections are written here. And
+> `__version__` numbers code revisions, not this repository's layout: moving the
+> package to the root is recorded in git, not as a release here.
 
 ## 1.0.0 — initial report generator
 
@@ -375,3 +376,377 @@
   normalisation, pedal-histogram invalid input, the `_to_utc` conversions, and the
   namespace defaults themselves (including a check that this file's newest section names
   the active namespace, so the two can no longer drift apart unnoticed).
+
+## 3.5.0 — per-row EP confidence grade
+
+- **Data namespace: unchanged, still `3.3.0/`.** The release adds two columns and changes
+  no computed value. Proven by replaying the identical cached raw artefacts of `3.3.0/`
+  through the pristine 3.4.0 package and through this one, and comparing the 49
+  pre-existing row fields cell by cell: **0 differing cells across 1,116,700 cells /
+  21,475 rows over 9 of the 14 replayable EVs** — N88GNW, AV24LXJ, EV73SAL, TA70WTL,
+  KY24LHT, CMZ6260, EX74JXW, LN25NKE, YN75NMA. The set is chosen to span both
+  segmentation branches (`soc` via YN75NMA, `speed` for the rest), mass-merge on and off,
+  and all three energy-source families (counter, `soc_estimate`, `soc_fallback`). Note the
+  one consequence of reusing the directory: the two new columns appear
+  only on reports **generated from this release onward**, so `3.3.0/` will hold a mix of
+  50-column and 52-column files until someone backfills it with
+  `python .claude/skills/generate-excel-report/tools/recompute_from_cache.py --src-ver
+  3.3.0 --dst-ver <new>` (SRF-free, and the grading pass is wired into that tool for
+  exactly this purpose). Consumers that read by column **name** are unaffected either way,
+  and the coarse weather patcher accepts both widths (see the hardening bullet below).
+- **New EV columns `EP Confidence` and `EP Confidence Reason`** (51 and 52), appended so
+  every hard-coded patcher column index (≤ 48) is untouched. Each trip row is graded
+  `good` / `caution` / `poor` for its own `Energy Performance (kWh/km)`, with the
+  triggered check codes and their measured values beside it. Charge rows, Stop rows and
+  trips with no usable distance are left blank — they state no EP, so there is nothing to
+  grade. Diesel keeps its own header set and is not graded: its energy comes from the LFC
+  fuel counter, whose failure modes (counter resets, coarse quantisation) are different
+  ones and are not modelled here.
+- **Why the column exists.** EP is a ratio of two independently-anchored quantities, and
+  when the telematics counters are sampled sparsely relative to the trips it can be badly
+  wrong *while still looking like a plausible number*. Four mechanisms are now measured
+  rather than left to the reader:
+  1. **Energy double counting on merge** — adjacent discharge segments that fall inside the
+     same sparse counter interval each take the whole interval, and
+     `merge_discharge_by_mass` sums the parts. The fleet replay finds **127 rows whose
+     energy is 1.3× to 2.5× what the counter measured over the same anchor span, most of
+     them at a ratio of exactly 2.000000** — N88GNW 57, EV73SAL 31, YK73WFN 17, AV24LXJ 9,
+     AV24LXK 7, AV24LXL 4, CMZ6260 2 — with implied capacities of 545–1067 kWh against
+     nominals of 360–540. `_enforce_anchor_ordering` repairs the *pairwise* overlap between
+     two surviving neighbours; it cannot see an overlap consumed inside a merge.
+     **All 127 grade `poor`.**
+  2. **Attribution window wider than the trip** — driving or standing time inside the
+     counter's anchor window but outside the trip window
+     (`pending_issues/008_stale_odometer_anchor_gap.md` is the odometer form of this).
+  3. **Insufficient SOC resolution** — LN25NKE's SOC channel steps in 0.4 % and its median
+     trip spans about six steps, with 5 % of trips spanning three.
+  4. **SOC discontinuity** — separately from resolution, LN25NKE's worst rows come from a
+     12-percentage-point drop between two samples 25 s apart during a yard shunt, turning
+     0.3 km of manoeuvring into 55 kWh and an EP of 176 kWh/km. The pack did not
+     discharge; the signal re-initialised.
+  Mechanisms 1 and 2 are pipeline defects and remain fixable; 3 and 4 are properties of the
+  source signal and are not. Either way the report no longer presents a number of unknown
+  quality as if it were measured.
+- **Twelve checks in four groups**, each naming a mechanism and reporting its measured
+  value: `DUP_ENERGY` / `SPLIT_ALLOC` / `CAP_INCONS` (energy provenance), `ENERGY_WINDOW` /
+  `IDLE_WINDOW` / `DIST_WINDOW` / `DIST_EXTRAP` (attribution window), `SOC_RES` /
+  `SOC_STEP` (SOC signal), `SHORT_DIST` / `SPEED` / `EP_RANGE` (scale and plausibility).
+  Two properties are load-bearing. The grade is the **worst** finding, not an average — one
+  decisive defect is not offset by other checks passing. And it measures **resolution and
+  internal consistency, not provenance**: `Energy Source` already records provenance, so a
+  well-resolved SOC-derived energy grades `good` rather than being penalised twice.
+- **Thresholds calibrated on the fleet, not guessed.** Every threshold was set against a
+  replay of all 40,070 discharge segments in `3.3.0/` across the 14 replayable EVs
+  (YN25RSY is excluded: it segments on SRF-Logger speed, which a cached replay does not
+  reproduce). The resulting mix is **84.4 % good, 10.3 % caution, 5.2 % poor**, and the
+  grade separates sharply on the quantity it is about: median EP 1.29 kWh/km for `good`
+  (99th percentile 2.28, maximum 3.81) against 2.02 for `poor` (99th percentile 27.4).
+  Of the rows above 8 kWh/km, **100 % grade `poor`**; above 5 kWh/km, 98 %; above
+  4 kWh/km, 93 % with none left `good`. The residual is 28 rows — 0.08 % of all `good`
+  rows — sitting between 3 and 3.81 kWh/km on 3.8–4.4 km winter trips with no detectable
+  defect, which is the honest answer for a genuinely short cold-weather leg rather than a
+  miss. The per-vehicle mix is also plausible: LN25NKE is the most-flagged (24.9 % poor,
+  all SOC-resolution and SOC-step) and T88RNW the most cautioned (22.7 %, almost entirely
+  short urban legs), while no vehicle is majority-flagged.
+- **Where the code lives.** New module `report_generator/ep_confidence.py` holds the whole
+  concern: `attach_ep_audits()` measures the diagnostics inside the segmentation layer
+  (called by `run_segment_detection()` after `_enforce_anchor_ordering`, because every
+  quantity is read off the counter anchors, which are stripped from the segment dict before
+  the row builder sees it) and travels on the segment's public `ep_audit` key;
+  `assess_ep_confidence()` is the **single** rule engine; `regrade_rows()` is the
+  authoritative final pass in `_finalize_rows`, run after the capacity correction has
+  settled the final energy source and once the period's effective capacity is available as
+  the counter-versus-SOC referee. `_seg_to_row` writes a provisional grade so any direct
+  caller of it still gets one. The measurement is strictly read-only: a regression test
+  pins that it never alters a segment.
+- **The SOC quantum is measured, not configured**: the greatest common divisor of a leg's
+  SOC changes recovers the channel's grid exactly (0.4 % for LN25NKE, 1.0 % for the other
+  thirteen) regardless of how densely that leg happens to be sampled, which a modal or
+  percentile estimate cannot do. A stray off-grid reading can only drag the estimate down,
+  making the check more lenient, never falsely harsh.
+- **The cached-recompute migration tool grades too** — `regrade_rows()` is wired into
+  `recompute_from_cache.py` at the same point in the sequence, so a recomputed report and a
+  freshly-generated one agree.
+- **Three defects found in pre-release review and fixed on the branch.**
+  1. *The window measurements were dead on pandas 3.* `attach_ep_audits` took its sample
+     trace as `df[time_col].astype("int64")` — an int64 view in the *Series'* unit — and
+     compared it against segment boundaries from `Timestamp.value`, which are always
+     nanoseconds. Since pandas 3, `pd.to_datetime(<ISO strings>, utc=True)` infers
+     `datetime64[us]`, so the two sides differed by 1000× with nothing raised:
+     `energy_outside_km` read 0.0, `dist_outside_km` NaN, both sample counts 0, the SOC
+     step NaN, and `ENERGY_WINDOW` / `DIST_WINDOW` / `DIST_EXTRAP` / `SOC_STEP` — four of
+     the twelve checks, including the one that names issue 008 — never fired. All datetime
+     conversions in the module now go through one `_ns_view` helper (`as_unit("ns")`,
+     matching what `row_builder` already does for the same reason), correct on pandas 2
+     and 3 alike. **Open item before release:** if the calibration replay quoted above ran
+     on pandas 3, those four checks were dead while it ran, so the 84.4 / 10.3 / 5.2 mix
+     and the per-vehicle figures are a lower bound on how much is flagged and must be
+     re-measured; the thresholds of the other eight checks are unaffected either way.
+  2. *The weather backfill would have patched nothing.* `weather_patcher._is_ev_layout`
+     compared the header row against the whole of `HEADERS`, which taking it to 52 turned
+     into a rejection of every 50-column report already on disk — reported as
+     "diesel/unknown layout", which reads like a correct refusal. It now matches the EV
+     header prefix preceding the two new columns (derived from the column's index, not
+     written as 50), so both widths of the mixed tree are patched and diesel is still
+     refused.
+  3. *A grading failure could abort a report.* All four call sites —
+     `attach_ep_audits`, the row builder's `assess_ep_confidence`, the per-row call inside
+     `regrade_rows` and `regrade_rows` itself — are now wrapped so an exception costs the
+     two confidence cells and nothing else, logged as a warning. The grade is a commentary
+     on the numbers, not one of them, and `_to_ns` builds a `pd.Timestamp` from raw
+     telematics unguarded. A failed audit also has its partial results discarded, so
+     half-measured diagnostics cannot drive a grade.
+- **New regression suites** — `tests/test_ep_confidence.py` (52 tests): the grading
+  contract (a grade exists exactly where an EP value exists; worst-finding wins; a missing
+  audit never invents a downgrade), every check at its own threshold, the SOC-quantum
+  estimator, the measurement reproducing each fingerprint on synthetic raw frames —
+  including the exact 2× double count — the segment-to-row hand-off, and a positive
+  control pinning the nanosecond unit on an explicitly `datetime64[us]` frame.
+  `tests/test_ep_confidence_resilience.py` (6) injects a failure at each of the four call
+  sites; `tests/test_weather_patcher_layout.py` (6) drives the backfill over 50-column,
+  52-column and diesel workbooks. Full suite: **346 passed, 2 skipped**.
+
+## 3.5.1 — Co-op operator curation + the configured mass column is honoured
+
+Data namespace: **unchanged, still `3.3.0/`**. Neither change can alter a cell of
+any vehicle the tree already held; the proofs are given per change below. The one
+vehicle whose numbers do move is MK15BEV, onboarded the same day this release was
+written and whose first reports the mass fix exists to correct — correcting a
+vehicle's first report is part of onboarding it, not a migration of the established
+fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
+
+- **`COOP` is now a curated operator code.** The Co-operative Group appears in SRF
+  on both routes of the operator cascade, so it is curated on both: the
+  round-robin token (`trial.description = "JOLT Round Robin: Coop-<OEM>"`, seen on
+  YN75NMA since 2026-06 and on the newly-onboarded MK15BEV) maps through
+  `_TRIAL_OP_TO_CODE`, and the dedicated comparator's static
+  `organisation.name = "Co-op"` maps through `_SRF_ORG_TO_CODE`. The hyphenated
+  spelling is accepted on both routes — `_normalize_op_token` turns `Co-op` into
+  `CO_OP`, a second code for one company, which the curation rule forbids.
+- **What actually changed is the warning, not the cell.** Before this release the
+  token was uncurated, so it fell through to `_normalize_op_token("Coop")`, which
+  returns the string `"COOP"` — exactly the code now curated — and flagged the leg
+  unknown. `is_unknown` is only ever accumulated into `op_acc` for the one-off
+  "Operator codes not in KNOWN_OPERATOR_CODES" WARN at the end of a run; it is
+  never written to a row. Curation therefore silences the WARN and leaves the
+  resolved string identical.
+- **Proof, and its limit.** The strict cell-by-cell regeneration was **not** run:
+  operator derivation reads `leg.trip.trial.description` live from SRF, and the
+  SRF-free replay tool (`recompute_from_cache.py`) does not derive the column at
+  all — it copies `Operator` verbatim from the source workbook — so a replay would
+  reproduce identical cells whatever this code did, which proves nothing. The
+  evidence is instead direct: the only vehicle in `3.3.0/` carrying the token is
+  YN75NMA, whose `20260707_20260920` report already reads `COOP` in all 83 rows,
+  and the pre-change helpers were measured returning `"COOP"` for both
+  `"JOLT Round Robin: Coop-Daimler"` and `"JOLT Round Robin: Coop-Scania"`. The
+  stored cells and the new curated value are the same string. The `_SRF_ORG_TO_CODE`
+  additions reach no existing vehicle either: a sweep of the newest report of every
+  vehicle in `3.3.0/` found no blank `Operator` cell anywhere, so no vehicle is
+  currently failing to resolve, and the only two carrying `COOP` — YN75NMA and
+  MK15BEV — already resolve through the trial route, which is consulted first.
+- **`_get_vehicle_mass` reads the configured `mass_col` instead of the module
+  literal.** The segmentation layer has always resolved `cfg["mass_col"]`, falling
+  back to the Logger CVW when that column is absent or carries nothing usable. The
+  row builder did not: it read `columns._WEIGHT_COL` directly, so a vehicle
+  configured *away* from the default name still had its `Vehicle Mass (kg)` cell
+  filled from the column its configuration had deliberately rejected. The column
+  now threads `cfg.get("mass_col", _WEIGHT_COL)` from `_generate_report` through
+  `_process_fps_legs` and `_seg_to_row` into `_get_vehicle_mass`, whose parameter
+  keeps the literal as its default.
+- **Found on MK15BEV, where the two layers disagreed by a factor of three.** That
+  vehicle's FPS `gross_combination_vehicle_weight` is the tractor weight, not the
+  combination weight — a moving median of 7.7 t against a Logger CVW of 25-29 t on
+  the same days — so its configuration points `mass_col` at a name the feed does
+  not carry, which is the supported way to reject a mislabelled signal. The
+  segmentation layer duly logged its fallback to the Logger CVW while all 86
+  driving rows of the first report were written with the 4-12 t telematics values.
+  With the fix the cell is left empty, and `LoggerPatcher` fills it from the Logger
+  — the companion behaviour it was already written for. The elevation- and
+  kinetics-corrected EP columns are empty on such a vehicle until the mass is
+  patched, the same data gap the fleet's other GCVW-less vehicles already show.
+- **Proof that no existing cell moves.** Every EV represented in `3.3.0/` sets
+  `mass_col` to `"gross_combination_vehicle_weight"` — the literal the function
+  used to read — so the resolved column is unchanged for all of them. The diesel
+  vehicles configure the Logger's `CVW …` name but never reach `_seg_to_row`, which
+  is the EV path only. The general fallback pipeline auto-detects the same literal
+  for an un-onboarded vehicle, and where the feed does not carry it the key is
+  simply absent, so the parameter default reproduces the previous behaviour exactly.
+  MK15BEV is the sole vehicle whose configuration differs, and its two reports —
+  both written the same day, before this fix — are the ones the fix corrects: they
+  must be regenerated under 3.5.1, after which their `Vehicle Mass (kg)` comes from
+  the Logger via `LoggerPatcher` instead of from the tractor-weight signal.
+- **Left alone deliberately: the speed column of the same function.** `_seg_to_row`
+  already accepts a `speed_col` argument, filled from `cfg["speed_col"]` at both
+  call sites — and never uses it, so `_get_vehicle_mass` keeps filtering on the
+  literal `wheel_based_speed`. LN25NKE and YN25RSY configure `"speed"` and their
+  raw telematics carries no `wheel_based_speed` column at all, so for those two the
+  moving-sample filter is silently inactive and the mass is aggregated over all
+  positive samples, stationary broadcasts included. Fixing that would change their
+  `Vehicle Mass (kg)` / `Vehicle Mass CV` cells and everything derived from them,
+  which makes it a behaviour-changing release with its own data namespace, not a
+  patch. Recorded here so the next mass-related release decides it deliberately.
+- **New regression suites** — `tests/test_operators.py` (17 tests) pins both
+  operator routes for Co-op, the spelled-out `Co-op` variant, the curated-set
+  membership, and the contract that an *uncurated* operator still reaches the cell
+  while flagging unknown. `tests/test_row_builder_mass_column.py` (4) drives
+  `_get_vehicle_mass` over a frame whose mass sits only under a non-default
+  configured name, over the MK15BEV shape where only the rejected default carries
+  data (expecting NaN), over the default-name path (pinning it identical to the
+  explicit call), and over the stationary-sample filter under a renamed column.
+  Full suite: **371 passed, 3 skipped** (3.5.0 baseline on this worktree: 350
+  passed, 3 skipped).
+
+## 3.6.0 — external capacity-ledger file (`JOLT_CAPACITY_LEDGER`)
+
+- **Data namespace: unchanged, still `3.3.0/`.** No reported cell can change, for two
+  independent reasons.
+  1. *Without the variable nothing changes.* `VEHICLE_CONFIG` is exactly the parsed
+     `vehicles.json`, and the write-back and the backfill write `vehicles.json` byte for
+     byte as before. Proven by driving the same sequence — a new period, a sparse period,
+     the same period again, a no-donor call, a registration not in the file, a backfill
+     dry run and a real backfill — through the 3.5.1 code and through this release on a
+     copy of the shipped `vehicles.json`: the file and the in-memory entries have
+     identical SHA-256 digests after every step.
+  2. *With the variable set, a ledger extracted from the same `vehicles.json` gives the
+     same numbers.* The overlaid configuration equals the file's own values, and the same
+     sequence leaves the ledger holding exactly the entries the unset run wrote into
+     `vehicles.json`, while `vehicles.json` stays byte-identical. The only report input
+     the ledger supplies — `effective_capacity_kwh`, the capacity seed — is therefore
+     the same number either way.
+- **Why.** The capacity ledger (`effective_capacity_kwh` + `effective_capacity_quarterly`)
+  is machine-written state, rewritten after every EV report, while everything else in
+  `vehicles.json` is reviewed, tuned parameters. Keeping both in one file meant every
+  report run dirtied the checkout of the code it ran from, and a parameter review could
+  not tell the two apart. The variable moves the state into a file of its own.
+- **New public loaders in `report_generator.configs`** — the way to read the configs,
+  never by file path: `get_capacity_ledger_path() -> Path | None` (the variable, read at
+  call time; unset, empty or blank means none), `load_vehicle_configs() -> dict` (a fresh
+  read of `vehicles.json` with the ledger overlaid), `load_pipeline_configs() -> dict` and
+  `apply_capacity_ledger(vehicles, *, skip=None) -> Path | None` (makes the ledger keys
+  of configs already loaded exactly what `load_vehicle_configs()` gives at that moment,
+  in place; a strict no-op without the variable),
+  plus the constants `CAPACITY_LEDGER_ENV_VAR` and `LEDGER_KEYS`.
+  `segmentation.constants` builds `VEHICLE_CONFIG` / `PIPELINE_CONFIGS` through them —
+  still the single load site, still shared by reference; `constants._load_json` is kept
+  and now delegates.
+- **Ledger file.** `{REG: {"effective_capacity_kwh": float, "effective_capacity_quarterly":
+  {period_key: {"kwh": float, "n": int}}}}`; only those two keys are read. For a
+  registration in both files each ledger key the entry carries replaces the config value
+  (a key it does not carry keeps it), a registration only in the ledger is ignored, and a
+  file that does not exist yet means no overlay. A blank file reads as empty; any other
+  content that is not such an object raises `ValueError`, so a damaged ledger is never
+  read as empty and then overwritten. Reads take the ledger lock, falling back to an
+  unlocked read only where the lock file cannot be created at all.
+- **Write-back** (`capacity._persist_effective_capacity`): with the variable set it writes
+  the ledger under `<ledger>.lock`, creating the file and its directory on the first
+  write, and only reads `vehicles.json` — for the unchanged membership rule that only a
+  vehicle in `vehicles.json` ever gets an entry. The period is merged into exactly what
+  the loader shows the reports: each ledger key the vehicle's entry lacks — both, when
+  it has no entry yet — is seeded from its `vehicles.json` entry, read fresh, so
+  switching a deployment over continues each vehicle's capacity history instead of
+  restarting it, and an entry that holds only `effective_capacity_kwh` keeps the
+  quarterly history the overlay was showing instead of collapsing the average onto the
+  new period. The seed is never the in-memory `VEHICLE_CONFIG`: after the variable is
+  pointed at another file, or the file edited, memory can still hold the previous
+  ledger's history, and nothing written may depend on it. Both targets share one merge
+  function (`_merge_period_capacity`). The ledger file is never rewritten in
+  place: the write goes to a temporary file in the same directory, is flushed and
+  fsynced, and replaces the ledger in one `os.replace`, retried for up to five attempts
+  0.2 s apart while it is refused with `PermissionError` (Windows, while a sync client,
+  an editor or a virus scanner holds the file). A kill, a full disk or an interrupted
+  sync therefore leaves the previous ledger whole, and any failure removes the
+  temporary file. On POSIX the directory is then fsynced as well, so a crash or power
+  loss after the write-back has returned cannot lose the rename — best effort: a file
+  system that cannot fsync a directory is logged at debug level and the write stands.
+  Windows has no directory fsync and is unchanged. The bytes are exactly those of a direct write (`indent=2`,
+  `ensure_ascii=False`, trailing newline), and the ledger keeps its permission bits (a
+  new one gets those a direct write gives it). The backfill writes the ledger the same
+  way.
+- **Backfill** (`capacity_backfill`): with the variable set, the rebuilt entries are
+  written into the ledger — exactly the entries the `vehicles.json` path would have
+  rewritten, both keys in full, whatever the entry held before — every other ledger
+  entry is kept, and `vehicles.json` is only read. The summaries start from the ledger
+  values. `--dry-run` writes nothing at all in this
+  mode, not even the lock file or the ledger's directory.
+- **The ledger is read when a report starts.** The package builds `VEHICLE_CONFIG` at
+  import — for `python -m report_generator.cli` before `main()` loads `.env` — so a
+  `JOLT_CAPACITY_LEDGER` set after the import would have been written by the
+  write-back without ever being read. `JOLTReportGenerator.generate_report()` — behind
+  `report_generator.generate_report()` and the CLI, for the EV and the diesel dispatch
+  alike — now calls `configs.apply_capacity_ledger(VEHICLE_CONFIG)` before it reads the
+  vehicle's config, and `main()` also applies it once `.env` is loaded, before the
+  generator is built. It makes the two ledger keys of every configured vehicle exactly
+  what a fresh `load_vehicle_configs()` gives — the ledger's value, else the
+  `vehicles.json` value, else no key — so a variable set after the import, pointed at
+  another file or at an edited one, never leaves a capacity or a history in memory
+  from a ledger the reports no longer read. It is idempotent, and without the variable
+  a strict no-op that reads nothing, neither the ledger nor `vehicles.json`. A
+  registration not in `vehicles.json` is left alone, and so is a runtime fallback
+  config injected by an earlier report: an un-onboarded vehicle takes no ledger state,
+  so generating it twice in one process gives the same report twice. The same
+  import-order limit applies, unchanged, to `JOLT_CONFIG_DIR` and to the postcode-cache
+  path under `JOLT_CACHE_DIR`; `deployment.md` now says to export those rather than
+  rely on `.env`.
+- **Documentation correction.** `deployment.md` said a read-only config directory makes
+  the write-back no-op with a warning. It does not: the write-back raises
+  `PermissionError` — on the lock file or on `vehicles.json` — before the report is
+  written (reproduced on 3.5.1 and on this release with a read-only `vehicles.json`).
+  The behaviour is unchanged, as the unset path must be; the deployment contract now
+  says so and recommends the external ledger for a read-only config directory.
+- **Test suite.** The session conftest removes `JOLT_CAPACITY_LEDGER` at import, since a
+  value inherited from the developer's shell would both change what the suite reads and
+  let a test write into a real ledger, and an autouse fixture fails any test that
+  leaves it set behind it, so a leak can never make the outcome depend on test order.
+  New: 28 unit tests of the loaders and the overlay semantics (both keys, a partial
+  entry, an uncovered vehicle, a ledger-only registration, a missing / blank / damaged
+  file, the import-time overlay in a fresh interpreter, and `apply_capacity_ledger` on
+  configs already loaded — a strict no-op without the variable that reads nothing, the
+  loader's view in place, another ledger named or the file edited restoring every key
+  it no longer carries, idempotent, copies, a registration not in `vehicles.json` and
+  a skipped config left alone); 48 integration tests of the write side (ledger written
+  and `vehicles.json` untouched, the lock, seeding from the file and never from memory,
+  merging into an existing entry, a partial entry continuing the history the reports
+  read, the merge equal to the loader's view for every entry shape, a ledger named
+  later or edited down to its scalar between two reports never receiving the previous
+  ledger's history, the membership rule, the no-donor no-op, backfill into the ledger
+  — a partial entry written out in full — the dry run, both targets producing the same
+  entry, byte-for-byte for the unset path, and the atomic file write: a direct write's
+  bytes and permission bits, a failure part-way leaving the old ledger whole, the
+  `PermissionError` retry and its limit, no temporary file left behind, and on POSIX
+  the directory fsync after a successful replace, never on Windows and never failing
+  the write when the file system refuses it); 7 integration
+  tests of the ledger read at report start (the EV and the diesel dispatch, the
+  convenience function, a ledger changed between two reports — another file or the
+  file edited — leaving no stale capacity, the strict no-op without the variable, a
+  runtime fallback config left alone); plus 2 CLI tests (a ledger named only in `.env`
+  is read before the generator is built; without the variable the configs are left
+  alone).
+- **Repository tooling** (no effect on the package or on any report):
+  - CI — `.github/workflows/tests.yml` runs the offline suite on ubuntu / Python 3.11,
+    from a clean install of the two requirements files, on every push and pull request.
+  - `doc/versions.md` discipline — a test requires every `## X.Y.Z` heading to be
+    SemVer, ascending, newest last, and the last one to equal `__version__`; with the
+    namespace test it is what enforces "bump the version, append its section, state
+    its data namespace" in one change.
+  - A fixture per onboarded vehicle — `tests/fixtures/make_fixture.py` turns a
+    `--debug` raw artefact into an anonymised fixture (rigid spherical rotation of every
+    GPS position onto (0.5, 0.5) by an unrecorded random angle, headings turned with
+    it, driver columns dropped, vehicle identity replaced by the alias, everything
+    else verbatim; it refuses to write while the registration survives anywhere, in
+    any case and however it is split — any run of spaces of any kind, zero-width
+    characters, hyphens, dashes or underscores between its characters, so the 3+4
+    and 3+3 plates are caught as well as the 4+3 ones, while two adjacent CSV cells
+    never are — and the file name loses every such spelling),
+    registers it in `tests/fixtures/raw_fixtures.json` and adds its frozen config;
+    `regenerate_goldens.py --alias` writes its first golden; and
+    `integration/test_registered_fixtures.py` guards every registered fixture — golden,
+    determinism, consumer contract, de-identification (the maker's spelling rule
+    included, for every live registration, in the file and its path), registry
+    consistency. Tried end
+    to end on a real EV telematics file and a real SRFLOGGER_V2 logger file in a
+    scratch clone (geodesic step distances preserved to 1e-12 km, headings consistent
+    with the rotated track, registration absent, the full suite green with both
+    fixtures added). The four original fixtures' heading columns predate the heading
+    rule and are verbatim.
+
+  Full suite: **1183 passed, 4 skipped** (3.5.1: 1035 passed, 4 skipped).

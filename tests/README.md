@@ -2,10 +2,16 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~45 s, 947 tests, fully offline
+pytest                       # ~60 s, 1187 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
+
+CI runs exactly this on every push and pull request
+(`.github/workflows/tests.yml`: ubuntu-latest, Python 3.11, a clean install from
+`requirements.txt` + `requirements-dev.txt`). So a test must not depend on a local
+cache, a key, a Windows path or anything else only a developer machine has — if one
+does, fix the test.
 
 ## Layout
 
@@ -26,15 +32,16 @@ tests/
 `unit/` holds tests whose input is constructed inline and whose expected value is
 hand-computed from the documented formula. `integration/` holds tests that run
 several modules together over the real (anonymised) fixture data and assert on
-artefacts — segment dicts, xlsx workbooks, the `vehicles.json` ledger.
+artefacts — segment dicts, xlsx workbooks, the capacity ledger (in `vehicles.json`
+and in the external `JOLT_CAPACITY_LEDGER` file).
 
 The five contract files directly under `tests/` predate this suite.
 
 | Area | Tests |
 |------|-------|
-| Existing contract suite (`tests/*.py`) | 247 |
-| `unit/` | 475 |
-| `integration/` | 225 |
+| Existing contract suite (`tests/*.py`) | 254 |
+| `unit/` | 637 |
+| `integration/` | 296 |
 
 ## The offline guarantee
 
@@ -47,7 +54,11 @@ Four things enforce it, all in the top-level `tests/conftest.py`:
    Setting the variable later would be too late. The directory is a `mkdtemp` and
    is removed in `pytest_sessionfinish`.
 2. **`SRF_API_KEY` / `OPENWEATHER_API_KEYS` are forced empty**, so nothing can
-   silently authenticate.
+   silently authenticate, and **`JOLT_CAPACITY_LEDGER` is removed**, so a ledger
+   named in the developer's shell is neither overlaid on the configs the suite reads
+   nor written by a test. Tests of the external ledger set it on `tmp_path`, through
+   `monkeypatch`; an autouse fixture fails any test that leaves it set, since every
+   later write-back of the session would land in that test's ledger.
 3. **Outbound sockets are blocked** for the whole session (`socket.connect` and
    `socket.create_connection` raise `NetworkAccessAttempted`). A test that needs
    remote data must inject a `Mock` instead.
@@ -84,17 +95,20 @@ the live configs' schema, and it asserts only structure, never values.)
 
 ## Golden files
 
-`tests/integration/test_segmentation_fixtures.py` and
-`test_diesel_pipeline_fixture.py` compare every field of every produced segment
-against frozen JSON snapshots in `tests/fixtures/expected/`. Regenerate with:
+`tests/integration/test_registered_fixtures.py` compares every field of every
+produced segment of every fixture registered in `tests/fixtures/raw_fixtures.json`
+against its frozen JSON snapshot in `tests/fixtures/expected/`;
+`test_segmentation_fixtures.py` and `test_diesel_pipeline_fixture.py` add
+hand-written expectations for the four original fixtures. Regenerate with:
 
 ```bash
-python tests/fixtures/regenerate_goldens.py
+python tests/fixtures/regenerate_goldens.py [--alias ALIAS]
 ```
 
 Only do that when a behaviour change is **intended**, and review the diff — the
 goldens exist precisely so that an unintended change to the segmentation maths
-cannot pass unnoticed. Full details in `tests/fixtures/README.md`.
+cannot pass unnoticed. A newly onboarded vehicle gets its own fixture with
+`tests/fixtures/make_fixture.py`. Full details in `tests/fixtures/README.md`.
 
 ## Coverage
 
@@ -116,9 +130,8 @@ worth faking:
 | Area | Why it is left uncovered |
 |------|--------------------------|
 | `charger_patcher._fetch_charger_windows`, `logger_patcher._fetch_logger_data` | Pure SRF query construction + paging. `patch_file` is covered instead, by injecting the windows/legs those methods would return — which is the interesting half. |
-| `weather_fetcher.WeatherFetcher.fetch_single` / `fetch_batch`, `weather_patcher.patch_file`, `fine_grained_patcher`, `weather_patch` | These exist to spend a paid OpenWeather quota. Mocking `requests` here would test the mock, not the fetcher. The pure helpers (`_parse_point`, `_deg_to_cardinal`, `_cell_needs_patch`, `_to_unix_utc`, `_is_ev_layout`, the whole `WeatherCache`) ARE covered, including the cache key format that protects the quota. |
-| `_generator._collect_legs` / `_preload_logger_channels` / `_process_fps_legs` / `_save_logger_data` | The SRF iteration half of the orchestrator. The transformation half it drives (`run_segment_detection` -> `_seg_to_row` -> `_insert_stop_rows` -> `_write_excel_report`) is covered end to end on real fixture data in `integration/test_excel_end_to_end.py`, and `generate_report` itself is exercised with a mocked SRF surface in `integration/test_runtime_fallback.py`. |
-| `capacity_backfill.main` | Argparse + `print` around `backfill_vehicle`, which is covered. |
+| `weather_fetcher.WeatherFetcher.fetch_single` / `fetch_batch`, `fine_grained_patcher`, `weather_patch` | These exist to spend a paid OpenWeather quota. Mocking `requests` here would test the mock, not the fetcher. The pure helpers (`_parse_point`, `_deg_to_cardinal`, `_cell_needs_patch`, `_to_unix_utc`, `_is_ev_layout`, the whole `WeatherCache`) ARE covered, including the cache key format that protects the quota, and `WeatherPatcher.patch_file` is driven end to end over a fully cached stub (no fetcher at all) in `unit/test_weather_patcher_layout.py`. |
+| `_generator._collect_legs` / `_preload_logger_channels` / `_process_fps_legs` / `_save_logger_data` | The SRF iteration half of the orchestrator. The transformation half it drives (`run_segment_detection` -> `_seg_to_row` -> `_insert_stop_rows` -> `_write_excel_report`) is covered end to end on real fixture data in `integration/test_excel_end_to_end.py`, and `generate_report` itself is exercised with a mocked SRF surface in `integration/test_runtime_fallback.py` and `integration/test_capacity_ledger_at_report_start.py`. |
 | `data_fetcher.fetch_events` | Six lines of SRF filter construction. |
 
 ## Conventions

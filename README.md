@@ -1,5 +1,8 @@
 # jolt-report-generator
 
+**Role: core repo** — the JOLT Excel report generator, its offline test suite and its
+documentation. Changes arrive as reviewed pull requests; `main` is the release line.
+
 Generates the JOLT Excel report for a vehicle over a date range: it pulls the vehicle's
 legs and raw telematics from the SRF platform, segments them into trips / charges / stops,
 computes the energy and mass metrics, and writes a formatted `.xlsx`.
@@ -27,7 +30,7 @@ doc/
 tests/                     # offline test suite (no network, no API key needed)
 ├── unit/                  # pure functions, hand-computed expectations
 ├── integration/           # multi-module runs over anonymised real telematics
-└── fixtures/              # the anonymised CSVs, frozen configs and golden snapshots
+└── fixtures/              # the anonymised CSVs, frozen configs, golden snapshots + the fixture maker
 ```
 
 ## Not a pip package
@@ -69,7 +72,7 @@ dropped into your environment's `site-packages`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # ~45 s, ~950 tests, fully offline
+pytest                     # ~60 s, ~1120 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network and no writable state outside the temp directory:
@@ -82,6 +85,10 @@ Excel writing and the capacity ledger all run against committed **anonymised rea
 telematics** and are compared field by field against frozen golden snapshots.
 See `tests/README.md` for the layout and `tests/fixtures/README.md` for what the
 fixtures contain and how they were de-identified.
+
+The same `pytest -q` runs in CI (`.github/workflows/tests.yml`: ubuntu, Python 3.11,
+installed from `requirements.txt` + `requirements-dev.txt` only) on every push and
+every pull request.
 
 ## Vehicles that are not configured
 
@@ -97,8 +104,13 @@ what degrades.
 
 Read **[doc/deployment.md](doc/deployment.md)**. The points most likely to bite:
 
-- **Writable state** — the effective-capacity ledger is persisted back into
-  `configs/vehicles.json`. Point `JOLT_CONFIG_DIR` at a writable copy of `configs/`.
+- **Writable state** — every EV report writes the vehicle's effective-capacity ledger
+  back. **Recommended:** set `JOLT_CAPACITY_LEDGER` to a file on a persistent, writable
+  volume — the ledger (machine-written state) then lives in that file, and
+  `configs/vehicles.json` stays what it is meant to be, reviewed tuned parameters,
+  read-only and never written. The alternative is the default: without the variable
+  the ledger is written back into `configs/vehicles.json`, so point `JOLT_CONFIG_DIR` at
+  a writable copy of `configs/`.
 - **Caches** — set `JOLT_CACHE_DIR` to a persistent volume; the SRF raw-data cache makes
   re-runs dramatically cheaper, and the weather cache protects a paid API quota.
 - **No paid API calls by default** — report generation uses the SRF logger's own weather

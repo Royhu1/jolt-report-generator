@@ -7,6 +7,8 @@ exit code (0 success / 2 bad invocation or missing key / 3 unknown vehicle).
 Environment (loaded from a ``.env`` in the working directory if present):
   SRF_API_KEY          required — SRF platform API key
   OPENWEATHER_API_KEYS optional — weather patching (post-generation step)
+  JOLT_CAPACITY_LEDGER optional — external capacity-ledger file (recommended:
+                       vehicles.json is then never written)
   JOLT_CONFIG_DIR      optional — override the config directory (writable)
   JOLT_CACHE_DIR       optional — override the cache root (default ./cache)
   SRF_API_ROOT         optional — override the SRF API root
@@ -110,9 +112,24 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Missing required argument(s): %s", ", ".join(missing))
         return 2
 
+    # Importing the package (which ``python -m report_generator.cli`` does before
+    # this function runs) loaded VEHICLE_CONFIG before the .env above was read,
+    # so a JOLT_CAPACITY_LEDGER named only there is applied now, before the
+    # generator is built. The report applies it again when it starts; the
+    # overlay is idempotent, and a no-op without the variable.
+    from report_generator.configs import apply_capacity_ledger
+    from report_generator.general_pipeline import (
+        VehicleNotFoundError,
+        is_runtime_config,
+    )
+    from report_generator.segmentation.constants import VEHICLE_CONFIG
+
+    ledger_path = apply_capacity_ledger(VEHICLE_CONFIG, skip=is_runtime_config)
+    if ledger_path is not None:
+        logger.info("Capacity ledger: %s", ledger_path)
+
     from report_generator import DATA_NAMESPACE, __version__
     from report_generator._generator import JOLTReportGenerator
-    from report_generator.general_pipeline import VehicleNotFoundError
     from report_generator.paths import default_report_root
 
     # Dual identity, always logged: the code revision and the data namespace it

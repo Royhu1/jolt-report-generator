@@ -10,7 +10,8 @@ In: a vehicle registration + an inclusive date range. Out: one formatted multi-s
 
 Pure batch — one invocation per `(vehicle, period)`, no server, no database, no
 long-running process. The only state written outside the output folder is the capacity
-ledger in the config directory and the caches (both below).
+ledger (in its own file when `JOLT_CAPACITY_LEDGER` is set, otherwise inside
+`vehicles.json`) and the caches (both below).
 
 ## Requirements
 
@@ -49,7 +50,8 @@ path = gen.generate_report("KY24LHT", "2025-01-01", "2025-01-31")   # → str | 
 | Variable | Required | Default | Controls |
 |----------|----------|---------|----------|
 | `SRF_API_KEY` | **yes** | — (rc 2) | SRF platform API key (Bearer token) |
-| `JOLT_CONFIG_DIR` | recommended | the vendored `configs/` | directory of the three config JSONs **and** the capacity-ledger write target |
+| `JOLT_CAPACITY_LEDGER` | recommended | — (the ledger lives in `vehicles.json`) | path of the capacity-ledger JSON file; when set, `vehicles.json` is never written |
+| `JOLT_CONFIG_DIR` | no | the vendored `configs/` | directory of the two config JSONs (`vehicles.json`, `pipelines.json`); also the capacity-ledger write target when `JOLT_CAPACITY_LEDGER` is unset |
 | `JOLT_CACHE_DIR` | recommended | `./cache` (CWD-relative) | cache root |
 | `SRF_API_ROOT` | no | `https://data.csrf.ac.uk/api/` | SRF REST root |
 | `OPENWEATHER_API_KEYS` | no | — (weather post-step patches nothing) | comma-separated OpenWeather keys |
@@ -61,22 +63,79 @@ The CLI loads a `.env` from the working directory if present (`python-dotenv`,
 environment. Inject secrets through the platform's secret manager; nothing containing
 a key is logged.
 
+The package loads the vehicle configs (and fixes the postcode-cache path) when it is
+first imported, which for `python -m report_generator.cli` is before `.env` is read.
+Export `JOLT_CONFIG_DIR` and `JOLT_CACHE_DIR` in the process environment rather than
+relying on `.env` for them; from the Python API, set both before
+`import report_generator`. `JOLT_CAPACITY_LEDGER` may be set later, from `.env` or
+from code, and a long-running process may point it at another file, or have the file
+edited, between two reports: every report reads the capacity state afresh when it
+starts (`JOLTReportGenerator.generate_report()`, and so
+`report_generator.generate_report()` and the CLI), before it reads the vehicle's
+capacity — the ledger's values, and the `vehicles.json` values for whatever the
+ledger does not carry. Nothing carries over from a ledger no longer named.
+
 ## Writable state — the capacity ledger
 
-`configs/vehicles.json` is not purely static: after each EV report the generator writes
-that vehicle's measured battery capacity back into it (`effective_capacity_kwh` plus the
-`effective_capacity_quarterly` ledger). **Copy `configs/` to a writable location and
-point `JOLT_CONFIG_DIR` at it.**
+After each EV report the generator writes that vehicle's measured battery capacity back
+(`effective_capacity_kwh` plus the per-period `effective_capacity_quarterly` history —
+together, the capacity ledger), and the vehicle's next report reads it back. It is
+state that must persist between runs, and it has two possible homes:
 
-- The write-back is guarded by a `filelock.FileLock` on `vehicles.json.lock`, and only
-  ever adds/updates capacity fields from `charge`/`discharge` donor segments — fallback
-  values are never written.
+| Mode | Set | The ledger is read from and written to | `vehicles.json` |
+|------|-----|-----------------------------------------|-----------------|
+| **External ledger** (recommended) | `JOLT_CAPACITY_LEDGER=/state/capacity_ledger.json` | that file, created on the first write | read only, never written |
+| In-config (default) | nothing, or `JOLT_CONFIG_DIR` | `vehicles.json` itself | rewritten after every EV report |
+
+**Recommended deployment**: keep `report_generator/configs/` exactly as shipped —
+read-only is fine — and point `JOLT_CAPACITY_LEDGER` at a file on a persistent,
+writable volume. The tuned parameters then change only through a reviewed update of
+this code, and the machine-written state lives apart from them. `JOLT_CONFIG_DIR` is
+only needed to run with your own copy of `vehicles.json` / `pipelines.json`.
+
+- **The ledger file** is a JSON object, one entry per registration:
+  `{"<REG>": {"effective_capacity_kwh": <float>, "effective_capacity_quarterly":
+  {"<YYYYMMDD_YYYYMMDD>": {"kwh": <float>, "n": <int>}}}}`. It is overlaid on
+  `vehicles.json` whenever the configs are loaded
+  (`report_generator.configs.load_vehicle_configs()`): for a registration in both, a
+  key the ledger entry carries replaces the `vehicles.json` value, and a key it does
+  not carry keeps it; a registration only in the ledger is ignored; a ledger file that
+  does not exist yet means no overlay. A file that is not such an object fails loudly
+  instead of being read as empty and overwritten.
+- **Starting a ledger.** An empty (or absent) ledger works: a vehicle's first
+  write-back seeds its entry from the values in `vehicles.json`, so its capacity history
+  continues rather than restarting. An entry that carries only one of the two keys is
+  completed the same way, from the `vehicles.json` value the reports were reading for
+  the other. To start from a known state instead, write the two keys of every vehicle,
+  taken from the `vehicles.json` you run with, into the file — the reports are then
+  exactly what they would be without the external ledger.
+- The write-back is guarded by a `filelock.FileLock` on `<ledger>.lock` (in the
+  default mode, `vehicles.json.lock`), and only ever adds/updates capacity fields from
+  `charge`/`discharge` donor segments — fallback values are never written. Only a
+  vehicle that is in `vehicles.json` ever gets an entry.
 - **One generation per vehicle at a time.** Two concurrent runs of the *same* vehicle
   race on its ledger entry (last writer wins) and duplicate SRF fetches. Different
   vehicles in parallel are safe: separate ledger keys, shared read-only caches, one SRF
   client per `JOLTReportGenerator` instance.
-- A read-only config directory is supported — the write-back no-ops with a logged
-  warning and reports fall back to `srf_capacity_kwh`.
+- **The write target must be writable.** A write-back that cannot write — including the
+  lock file beside it — raises, and that report is not written. A read-only config
+  directory therefore needs the external ledger.
+- **The ledger file is replaced, never rewritten in place.** Each write goes to a
+  temporary `<ledger>.<random>.tmp` beside it, is flushed to disk, and then replaces the
+  ledger in one atomic rename, so a killed process, a full disk or an interrupted sync
+  leaves the previous ledger whole. On POSIX the directory is flushed after the rename
+  as well, so a crash or power loss once a write-back has returned cannot undo it (best
+  effort: a file system that cannot flush a directory is logged at debug level and the
+  write-back still succeeds). The ledger keeps its permission bits. The rename
+  needs the ledger's *directory* to be writable (as the lock file already does): mount
+  a directory for it, not the single file, which cannot be replaced. On Windows a rename
+  refused while another program (a sync client, an editor, a virus scanner) holds the
+  file is retried for about a second before the write-back raises. A `.tmp` file left
+  by a killed process is safe to delete.
+- `python -m report_generator.capacity_backfill --report-db <dir>` rebuilds the ledger
+  from finished reports, into whichever of the two homes is active; with `--dry-run` it
+  prints the result and writes neither `vehicles.json` nor the ledger (in the external
+  mode it does not even create the ledger's lock file or directory).
 
 ## Caches
 
@@ -151,10 +210,15 @@ dependencies include neither matplotlib nor scikit-learn.
 
 ## Known quirks — do NOT "fix" these silently
 
-- **Two header layouts.** EV uses `HEADERS` (50 columns), diesel `DIESEL_HEADERS` (26).
+- **Two header layouts.** EV uses `HEADERS` (52 columns), diesel `DIESEL_HEADERS` (26).
   Diesel is a distinct set — no SOC/battery/charging columns, carries `Fuel Used (L)` /
-  `Fuel Consumption (L/100km)` — not a truncation of EV. `Operator` is last in both. Do
-  not unify them.
+  `Fuel Consumption (L/100km)` — not a truncation of EV. `Operator` is the last column
+  both share; EV appends the `EP Confidence` / `EP Confidence Reason` pair after it, and
+  diesel is not graded. Do not unify them.
+- **Blank, not `=NA()`, where there is nothing to grade.** The two EP-confidence cells of
+  a charge row, a Stop row or a trip without an EP value are left truly empty: nothing is
+  missing there, there is simply no grade. An EV report written before the pair existed
+  stops at `Operator`; the coarse weather patcher accepts both widths.
 - **Append-only column contract.** The patchers address **hardcoded 1-based column
   indices** (temperature = EV column 38). New columns go at the end, never inserted.
   Import-time assertions (`_COL_* == HEADERS.index(<name>) + 1`) and

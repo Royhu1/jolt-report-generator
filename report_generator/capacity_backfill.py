@@ -1,8 +1,11 @@
 """
 capacity_backfill.py
 ====================
-Backfill vehicles.json's ``effective_capacity_quarterly`` schema from
-the existing xlsx report library, without re-running the reports.
+Backfill the capacity ledger (``effective_capacity_quarterly`` +
+``effective_capacity_kwh``) from the existing xlsx report library, without
+re-running the reports. The ledger is written into ``vehicles.json``, or — when
+``JOLT_CAPACITY_LEDGER`` names a file — into that file, and ``vehicles.json`` is
+then only read.
 
 For each EV (``fuel_type != "DIESEL"``):
 
@@ -24,11 +27,13 @@ Diesel vehicles are skipped entirely and get no quarterly fields. Pure
 soc_estimate vehicles with no donor (e.g. the SOC-only Mercedes) produce an empty
 quarterly and leave the existing scalar untouched.
 
-Usage (jolt env, run from the repo root)::
+Usage (run from the repository root)::
 
-    PYTHONUTF8=1 D:/Anaconda/envs/jolt/python.exe \\
-        -m report_generator.capacity_backfill \\
+    python -m report_generator.capacity_backfill \\
         --report-db excel_report_database/<version> [--dry-run]
+
+With ``JOLT_CAPACITY_LEDGER`` set, only the ledger entries of the vehicles the
+backfill rebuilt are rewritten; every other ledger entry is kept as it is.
 """
 
 from __future__ import annotations
@@ -47,7 +52,16 @@ from report_generator._generator import (
     _period_capacity_from_rows,
     _recompute_weighted_capacity,
 )
-from report_generator.configs import get_config_path
+from report_generator.configs import (
+    LEDGER_KEYS,
+    _ledger_lock,
+    _load_config_json,
+    _overlay_capacity_ledger,
+    _read_capacity_ledger,
+    _write_capacity_ledger,
+    get_capacity_ledger_path,
+    get_config_path,
+)
 
 # Only match the standard report naming (ending exactly in _<8digit>_<8digit>.xlsx);
 # finetuned / other suffixes naturally do not match and are skipped.
@@ -177,12 +191,17 @@ def main(argv=None):
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="compute + print, but do NOT write vehicles.json",
+        help="compute + print, but write nothing (neither vehicles.json nor the "
+        "capacity ledger)",
     )
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
     db = Path(args.report_db)
+    ledger_path = get_capacity_ledger_path()
+    if ledger_path is not None:
+        return _backfill_into_ledger(db, ledger_path, args.min_donors, args.dry_run)
+
     path = get_config_path("vehicles.json")
     # Guard the read-modify-write against a concurrent report-gen capacity
     # write-back (same lock file as _persist_effective_capacity).
@@ -190,18 +209,7 @@ def main(argv=None):
         with open(path, encoding="utf-8") as f:
             all_cfg = json.load(f)
 
-        summaries = []
-        for reg, cfg in all_cfg.items():
-            if str(cfg.get("fuel_type", "")).upper() == "DIESEL":
-                print(f"[skip diesel] {reg}")
-                continue
-            rdir = db / reg
-            if not rdir.is_dir():
-                print(f"[no reports]  {reg}")
-                continue
-            s = backfill_vehicle(reg, rdir, cfg, args.min_donors)
-            summaries.append(s)
-            _print_summary(s, args.min_donors)
+        summaries = _backfill_all(all_cfg, db, args.min_donors)
 
         if args.dry_run:
             print("\n[dry-run] vehicles.json NOT written")
@@ -210,6 +218,63 @@ def main(argv=None):
                 json.dump(all_cfg, f, indent=2, ensure_ascii=False)
                 f.write("\n")
             print(f"\nvehicles.json written: {path}")
+    return summaries
+
+
+def _backfill_all(all_cfg: dict, db: Path, min_donors: int) -> list[dict]:
+    """Backfill every EV in ``all_cfg`` from ``db`` in place; return the summaries."""
+    summaries = []
+    for reg, cfg in all_cfg.items():
+        if str(cfg.get("fuel_type", "")).upper() == "DIESEL":
+            print(f"[skip diesel] {reg}")
+            continue
+        rdir = db / reg
+        if not rdir.is_dir():
+            print(f"[no reports]  {reg}")
+            continue
+        s = backfill_vehicle(reg, rdir, cfg, min_donors)
+        summaries.append(s)
+        _print_summary(s, min_donors)
+    return summaries
+
+
+def _backfill_into_ledger(
+    db: Path, ledger_path: Path, min_donors: int, dry_run: bool
+) -> list[dict]:
+    """The ``JOLT_CAPACITY_LEDGER`` half of :func:`main`.
+
+    ``vehicles.json`` supplies the vehicle list (fuel types, and the parameters
+    the summaries print) and is only read. The current ledger is overlaid on it,
+    so a summary's "old" value is the one reports actually use. Every vehicle
+    the backfill rebuilt gets its two ledger keys written into the ledger —
+    exactly the entries the ``vehicles.json`` path would have rewritten — under
+    ``<ledger>.lock``; the ledger is created if it does not exist. ``dry_run``
+    writes nothing at all: no ledger, no lock file, no directory.
+    """
+    all_cfg = _load_config_json("vehicles.json")
+    if dry_run:
+        _overlay_capacity_ledger(
+            all_cfg, _read_capacity_ledger(ledger_path, lock=False)
+        )
+        summaries = _backfill_all(all_cfg, db, min_donors)
+        print("\n[dry-run] capacity ledger NOT written")
+        return summaries
+
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    with _ledger_lock(ledger_path):
+        ledger = _read_capacity_ledger(ledger_path, lock=False)
+        _overlay_capacity_ledger(all_cfg, ledger)
+        summaries = _backfill_all(all_cfg, db, min_donors)
+        for s in summaries:
+            if not s["quarterly"]:
+                continue  # nothing rebuilt: the entry was left untouched
+            cfg = all_cfg[s["reg"]]
+            entry = ledger.setdefault(s["reg"], {})
+            for key in LEDGER_KEYS:
+                if key in cfg:
+                    entry[key] = cfg[key]
+        _write_capacity_ledger(ledger_path, ledger)
+    print(f"\ncapacity ledger written: {ledger_path}")
     return summaries
 
 

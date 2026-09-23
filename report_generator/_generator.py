@@ -48,6 +48,7 @@ from report_generator.capacity import (  # noqa: F401
     _row_idx,
     _soc_weighted_cap,
 )
+from report_generator.configs import apply_capacity_ledger
 from report_generator.data_class import ServerData
 from report_generator.data_fetcher import fetch_events
 from report_generator.diesel_pipeline import (
@@ -58,6 +59,7 @@ from report_generator.general_pipeline import (  # noqa: F401
     build_runtime_vehicle_config,
     is_runtime_config,
 )
+from report_generator.ep_confidence import audit_key, regrade_rows
 from report_generator.operators import derive_leg_operator
 from report_generator.paths import (
     default_report_root,
@@ -65,6 +67,7 @@ from report_generator.paths import (
     get_srf_api_root,
 )
 from report_generator.report_builder import (
+    _WEIGHT_COL,
     DIESEL_HEADERS,
     HEADERS,
     _insert_stop_rows,
@@ -220,6 +223,15 @@ class JOLTReportGenerator:
         ds = datetime.datetime.strptime(date_start, "%Y-%m-%d")
         de = datetime.datetime.strptime(date_end, "%Y-%m-%d")
 
+        # VEHICLE_CONFIG is loaded at import, but JOLT_CAPACITY_LEDGER may have
+        # been set since (a .env loaded later, say), pointed at another file, or
+        # the file edited. The capacity seed read below must come from the ledger
+        # the write-back targets, so before the vehicle's config is read its
+        # ledger keys are made exactly what a fresh load gives — a strict no-op
+        # without the variable. A runtime fallback config injected by an earlier
+        # call is skipped: an un-onboarded vehicle takes no state from the
+        # ledger, just as a ledger-only registration is ignored at load.
+        apply_capacity_ledger(VEHICLE_CONFIG, skip=is_runtime_config)
         cfg = VEHICLE_CONFIG.get(reg)
         # ── General fallback pipeline for un-onboarded registrations ──────────
         # A registration absent from vehicles.json no longer errors: build a
@@ -272,6 +284,11 @@ class JOLTReportGenerator:
             soc_est_cap = eff_cap_kwh or srf_capacity_kwh or nominal_kwh
         altitude_col = cfg.get("altitude_col")
         speed_col = cfg.get("speed_col", "wheel_based_speed")
+        # Telematics mass column, same key the segmentation layer resolves. A
+        # vehicle whose feed mislabels its GCVW points this at a name the feed
+        # does not carry, so both layers fall back to the Logger CVW instead of
+        # reading the wrong signal.
+        mass_col = cfg.get("mass_col", _WEIGHT_COL)
         # Per-segment mass aggregation method (vehicle > pipeline > default
         # 'mean'). Resolved once and passed through to each _seg_to_row so the Excel
         # column and the validation figure use the same robust estimate.
@@ -318,6 +335,10 @@ class JOLTReportGenerator:
         charger_meter_all = self._preload_charger_meter(charger_objects)
 
         all_rows = []
+        # Per-segment EP-confidence diagnostics, keyed by the segment's start
+        # instant, carried from the segmentation layer to the final grading pass
+        # in _finalize_rows (the row tuple has no room for a diagnostics dict).
+        ep_audits: dict = {}
         cumulative_km = 0.0
         home_point = None
 
@@ -366,12 +387,14 @@ class JOLTReportGenerator:
             altitude_col,
             speed_col,
             mass_agg,
+            mass_col,
             srf_org_raw,
             trial_cache,
             op_acc,
             home_point,
             cumulative_km,
             all_rows,
+            ep_audits,
         )
 
         self._reclassify_home_charging(all_rows, home_point)
@@ -431,7 +454,7 @@ class JOLTReportGenerator:
                 )
 
         sorted_rows, period_cap_kwh, period_n, period_src = self._finalize_rows(
-            sorted_rows, out_headers, is_diesel, cfg, soc_est_cap
+            sorted_rows, out_headers, is_diesel, cfg, soc_est_cap, ep_audits
         )
 
         return self._write_outputs(
@@ -674,12 +697,14 @@ class JOLTReportGenerator:
         altitude_col,
         speed_col,
         mass_agg,
+        mass_col,
         srf_org_raw,
         trial_cache,
         op_acc,
         home_point,
         cumulative_km,
         all_rows,
+        ep_audits=None,
     ):
         """Main EV loop: per FPS leg cache raw telematics, run segmentation, build
         charge/discharge rows, and detect the home charging point. Returns the
@@ -803,6 +828,7 @@ class JOLTReportGenerator:
                     speed_col=speed_col,
                     operator=op_code,
                     mass_agg=mass_agg,
+                    mass_col=mass_col,
                 )
                 all_rows.append((seg["start_time"], list(row)))
 
@@ -828,8 +854,11 @@ class JOLTReportGenerator:
                     logger_dec_pedal_all=logger_dec_pedal_all,
                     operator=op_code,
                     mass_agg=mass_agg,
+                    mass_col=mass_col,
                 )
                 all_rows.append((seg["start_time"], list(row)))
+                if ep_audits is not None and seg.get("ep_audit") is not None:
+                    ep_audits[audit_key(seg["start_time"])] = seg["ep_audit"]
 
             if home_point is None and c_segs:
                 from geopy import Point as GeoPoint
@@ -888,9 +917,11 @@ class JOLTReportGenerator:
                     "Charge-segment reclassification: %d rows Away → Home", reclassified
                 )
 
-    def _finalize_rows(self, sorted_rows, out_headers, is_diesel, cfg, soc_est_cap):
+    def _finalize_rows(
+        self, sorted_rows, out_headers, is_diesel, cfg, soc_est_cap, ep_audits=None
+    ):
         """Effective-capacity correction (EV) + non-discharge EP scrub + per-period
-        donor capacity + Stop-row insertion. Returns
+        donor capacity + final EP-confidence grading + Stop-row insertion. Returns
         (sorted_rows, period_cap_kwh, period_n, period_src)."""
         # ── Post-processing: effective capacity correction ──────────────
         # Diesel vehicles have no SOC / battery capacity, skip this step.
@@ -947,6 +978,31 @@ class JOLTReportGenerator:
             period_cap_kwh, period_n, period_src = _period_capacity_from_rows(
                 sorted_rows, _IDX_CAP, _IDX_SOC_CHANGE, _IDX_ESOURCE
             )
+
+            # ── Final EP-confidence grading ──────────────────────────────
+            # Authoritative pass: runs after the capacity correction (which can
+            # rewrite a row's energy to SOC-derived and relabel its Energy
+            # Source) and after the EP scrub above, and supplies the period's
+            # effective capacity as the independent referee for the
+            # counter-versus-SOC cross-check. Overwrites the provisional grade
+            # the row builder wrote. Stop rows are inserted after this and carry
+            # a blank grade by construction.
+            # Wrapped as the outer net under regrade_rows' own per-row guard: by
+            # this point every reported number is settled, so nothing that can go
+            # wrong while forming a commentary on them is worth losing them for.
+            try:
+                regrade_rows(
+                    sorted_rows,
+                    out_headers,
+                    audit_by_start=ep_audits,
+                    capacity_ref_kwh=computed_eff_cap,
+                )
+            except Exception:
+                logger.warning(
+                    "Final EP-confidence grading pass failed; the report is "
+                    "written with the grades left as they stand",
+                    exc_info=True,
+                )
 
         # ── Post-processing: fill in Stop rows (stationary segments between trip/charge) ──
         # Must run AFTER sorting + effective capacity correction so that the

@@ -198,6 +198,15 @@ def test_is_ev_layout_accepts_the_ev_header_row():
     assert wp._is_ev_layout(_sheet_with_header(HEADERS)) is True
 
 
+def test_is_ev_layout_accepts_an_ev_report_without_the_ep_confidence_pair():
+    # A report written before the two EP-confidence columns were appended stops
+    # one column short of them. Every column the patcher writes lies inside that
+    # prefix, so it is the same layout as far as the patcher is concerned.
+    prefix = HEADERS[: HEADERS.index("EP Confidence")]
+    assert len(prefix) == len(HEADERS) - 2
+    assert wp._is_ev_layout(_sheet_with_header(prefix)) is True
+
+
 def test_is_ev_layout_rejects_a_diesel_workbook():
     # This guard is why the coarse patcher cannot silently write temperature into
     # a diesel report's wrong column.

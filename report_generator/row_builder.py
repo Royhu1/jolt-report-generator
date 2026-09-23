@@ -14,6 +14,7 @@ compatibility.
 from __future__ import annotations
 
 import json
+import logging
 from math import nan
 from urllib.parse import urlencode, urljoin
 
@@ -37,6 +38,7 @@ from report_generator.energy_correction import (
     GRAVITY_M_S2,
     battery_elevation_energy_kwh,
 )
+from report_generator.ep_confidence import assess_ep_confidence
 from report_generator.paths import get_cache_dir
 from report_generator.pedal_histogram import (
     EBC1_COL,
@@ -49,6 +51,8 @@ from report_generator.segment_algorithms import (
     TIME_COL,
     _agg_mass,
 )
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # URL-building utilities
@@ -168,8 +172,18 @@ def _get_vehicle_mass(
     speed_col: str = _SPEED_COL,
     speed_threshold_kmh: float = MOVING_SPEED_THRESHOLD_KMH,
     method: str = "mean",
+    mass_col: str = _WEIGHT_COL,
 ) -> tuple[float, float]:
     """Return (mass_kg, cv) or (nan, nan).
+
+    ``mass_col`` is the telematics mass column to read, i.e. the vehicle's
+    configured ``cfg["mass_col"]``; it defaults to :data:`_WEIGHT_COL`, the name
+    every standard EV feed uses. Honouring the configuration matters where the
+    feed's own GCVW signal is not the combination weight: such a vehicle points
+    ``mass_col`` at a name its telematics does not carry, which makes the
+    segmentation layer fall back to the Logger CVW and makes this function
+    return NaN rather than the misleading telematics value — the empty cell is
+    then filled from the Logger by ``LoggerPatcher``.
 
     Prefer computing the leg mean/CV from **moving** (speed >
     ``speed_threshold_kmh``) mass samples only — the J1939 GCVW broadcast while
@@ -187,10 +201,10 @@ def _get_vehicle_mass(
     constructed from ``TIME_COL`` and passed in only under that method; every other
     method's path is value-identical.
     """
-    if _WEIGHT_COL not in df.columns:
+    if mass_col not in df.columns:
         return nan, nan
     mask = _seg_mask(df, t_start, t_end)
-    vals = pd.to_numeric(df.loc[mask, _WEIGHT_COL], errors="coerce")
+    vals = pd.to_numeric(df.loc[mask, mass_col], errors="coerce")
     # Filter out J1939 default 0 values (default broadcast while stationary, not a real reading)
     # cf. diesel_pipeline.py line ~549 which also uses m > 0 filtering for CVW
     valid = vals.notna() & (vals > 0)
@@ -746,6 +760,13 @@ def _stop_row_from_neighbours(
             op = _get(next_row, "Operator")
         row[_i("Operator")] = op
 
+    # ── EP confidence — not applicable to a Stop (it reports no EP) ───────
+    # ``None`` rather than the default NaN so the cell is written blank instead of
+    # ``=NA()``: nothing is missing here, there is simply nothing to grade.
+    for conf_col in ("EP Confidence", "EP Confidence Reason"):
+        if _has(conf_col):
+            row[_i(conf_col)] = None
+
     return row
 
 
@@ -826,11 +847,14 @@ def _seg_to_row(
     logger_dec_pedal_all: pd.DataFrame | None = None,
     operator: str | None = None,
     mass_agg: str = "mean",
+    mass_col: str = _WEIGHT_COL,
 ) -> tuple:
     """
     Convert a segment dict into one row of Excel data (HEADERS order).
 
     mode: 'charge' | 'discharge'
+    mass_col:              telematics mass column to read for `Vehicle Mass (kg)`
+                           (the vehicle's configured ``cfg["mass_col"]``).
     logger_speed_all:      Logger 1Hz speed DataFrame (indexed by UTC timestamp, column 'logger_speed'),
                            used for the per-second kinetics correction.
     logger_acc_pedal_all:  Logger EEC2 accelerator-pedal position DataFrame (indexed by UTC timestamp).
@@ -908,7 +932,9 @@ def _seg_to_row(
     dur_h = duration.total_seconds() / 3600.0
 
     # ── Vehicle mass ──────────────────────────────────────────────────────
-    veh_mass, veh_mass_cv = _get_vehicle_mass(df_leg, t_s, t_e, method=mass_agg)
+    veh_mass, veh_mass_cv = _get_vehicle_mass(
+        df_leg, t_s, t_e, method=mass_agg, mass_col=mass_col
+    )
     recuperation = _get_recuperation(df_leg, t_s, t_e)
     elevation_diff = _get_elevation_diff(df_leg, t_s, t_e, altitude_col)
 
@@ -981,6 +1007,36 @@ def _seg_to_row(
             except Exception:
                 pass
 
+    # ── EP confidence grade ───────────────────────────────────────────────
+    # First of the two grading passes (see ep_confidence.assess_ep_confidence).
+    # ``capacity_ref_kwh`` is deliberately omitted here: the only capacity
+    # available at this point is this row's own implied value, so the
+    # counter-versus-SOC cross-check would compare a number with itself. The
+    # second pass, inside _correct_effective_capacity, re-grades with the
+    # corrected capacity and any rewritten energy source, and wins.
+    # Wrapped for the same reason the measurement is (see detection.py): the grade
+    # is a commentary on the row, so a failure to form it must cost the two
+    # confidence cells and nothing else — never the row, and never the report. A
+    # blank grade reads as "not graded", which is the truth.
+    try:
+        ep_conf, ep_conf_reason = assess_ep_confidence(
+            seg.get("ep_audit"),
+            energy_source=energy_source,
+            delta_soc_pct=soc_change,
+            distance_km=distance,
+            duration_h=dur_h,
+            energy_kwh=energy_change,
+            ep_kwh_km=energy_perf,
+        )
+    except Exception:
+        logger.warning(
+            "EP-confidence grading failed for the segment starting %s; "
+            "leaving the grade blank",
+            t_s,
+            exc_info=True,
+        )
+        ep_conf, ep_conf_reason = None, None
+
     # ── Cumulative distance ───────────────────────────────────────────────
     if mode == "discharge" and not np.isnan(distance):
         cumulative_km += distance
@@ -1040,5 +1096,7 @@ def _seg_to_row(
         propulsion_kwh,  # Propulsion Energy (kWh)
         ep_exclude_aux,  # EP_exclude_aux (kWh/km)
         operator,  # Operator (project code)
+        ep_conf,  # EP Confidence
+        ep_conf_reason,  # EP Confidence Reason
     )
     return row, cumulative_km

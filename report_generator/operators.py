@@ -45,6 +45,7 @@ KNOWN_OPERATOR_CODES = {
     "PORT_EXPRESS_DAIMLER",
     "KNOWLES",
     "NESTLE",
+    "COOP",
 }
 
 # ── Round-robin trial token (raw, from "JOLT Round Robin: <OP>-<OEM>") → code ─
@@ -59,6 +60,12 @@ _TRIAL_OP_TO_CODE = {
     "sjg": "SJG",
     "port express": "PORT_EXPRESS_DAIMLER",
     "htl": "HTL",
+    # SRF spells the Co-operative Group's token "Coop"; "co-op" is accepted too
+    # because the round-robin regex backtracks over the hyphen ("Co-op-Scania"
+    # captures "Co-op"), and the same company appears as "Co-op" on its
+    # dedicated vehicles' organisation.name.
+    "coop": "COOP",
+    "co-op": "COOP",
 }
 
 # ── Static vehicle / trial organisation.name → code (dedicated vehicles) ──────
@@ -71,6 +78,8 @@ _SRF_ORG_TO_CODE = {
     "welch group": "WELCH_TRANSPORT",
     "dp world": "DP_WORLD",
     "william jackson food": "WJF",
+    "co-op": "COOP",
+    "coop": "COOP",
 }
 
 # Generic umbrella orgs that carry no per-vehicle operator signal.

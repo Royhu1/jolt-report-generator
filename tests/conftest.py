@@ -17,6 +17,14 @@ imported):
    client; making the key empty means a stray attempt fails loudly rather than
    silently authenticating.
 
+3. ``JOLT_CAPACITY_LEDGER`` is removed. ``VEHICLE_CONFIG`` overlays that file at
+   import, and the capacity write-back targets it, so a value inherited from the
+   developer's shell would both change what the suite reads and let a test write
+   into a real ledger. A test that exercises the ledger sets it on ``tmp_path``,
+   through ``monkeypatch``; a test that leaves it set behind it fails (see
+   ``_no_capacity_ledger_left_behind``), since every later write-back of the
+   session would otherwise land in that test's ledger.
+
 The rest of the file provides the shared fixtures: the fixture directory, the
 raw-telematics / logger loaders (matching production's ``read_csv`` options
 exactly), and the frozen alias configs injected into the shared
@@ -44,11 +52,32 @@ os.environ.setdefault("WEATHER_CACHE_FILE", str(Path(_TEST_CACHE_DIR) / "weather
 # OpenWeather key rotation reads this; empty means "no keys", so no request can
 # ever be built even if a fetcher were constructed.
 os.environ.setdefault("OPENWEATHER_API_KEYS", "")
+# Never read or write a real capacity ledger (see the module docstring).
+os.environ.pop("JOLT_CAPACITY_LEDGER", None)
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook
     """Remove the throwaway cache directory created at import time."""
     shutil.rmtree(_TEST_CACHE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_capacity_ledger_left_behind():
+    """Fail a test that leaves ``JOLT_CAPACITY_LEDGER`` set after it.
+
+    Torn down after the test's own ``monkeypatch`` has been undone, so a variable
+    set through ``monkeypatch`` is already gone; one written to ``os.environ``
+    directly is still there, would silently redirect the capacity write-back of
+    every later test in the session, and makes the outcome depend on test order.
+    It is removed, and the test that left it fails.
+    """
+    yield
+    leaked = os.environ.pop("JOLT_CAPACITY_LEDGER", None)
+    if leaked is not None:
+        pytest.fail(
+            f"the test left JOLT_CAPACITY_LEDGER={leaked!r} set; set it with "
+            "monkeypatch.setenv so it is removed again"
+        )
 
 
 # ── Offline guarantee ────────────────────────────────────────────────────────
@@ -86,13 +115,22 @@ def _block_network():
 
 # ── Fixture data ─────────────────────────────────────────────────────────────
 
+#: The raw-fixture registry, ``alias -> {"path": <relative path>, "kind": "ev" |
+#: "diesel"}``. ``tests/fixtures/make_fixture.py`` appends an entry when a vehicle
+#: is onboarded; every registered fixture is guarded by
+#: ``integration/test_registered_fixtures.py``.
+FIXTURE_REGISTRY_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "raw_fixtures.json"
+)
+with open(FIXTURE_REGISTRY_PATH, encoding="utf-8") as _fh:
+    FIXTURE_REGISTRY: dict = json.load(_fh)
+
 #: Alias → relative path of the committed anonymised raw fixture.
-RAW_FIXTURES = {
-    "EVSPD01": "raw/EVSPD01/raw_2025-06-27_0000.csv",
-    "EVSOC01": "raw/EVSOC01/raw_2026-04-24_0000.csv",
-    "EVMAD01": "raw/EVMAD01/raw_2025-07-29_0000.csv",
-    "DSL01": "raw/DSL01/logger_2025-10-07_0000.csv",
-}
+RAW_FIXTURES = {alias: entry["path"] for alias, entry in FIXTURE_REGISTRY.items()}
+
+#: Alias → ``"ev"`` (raw telematics; segmentation golden) or ``"diesel"`` (SRF
+#: logger CSV; diesel-trip golden).
+FIXTURE_KINDS = {alias: entry["kind"] for alias, entry in FIXTURE_REGISTRY.items()}
 
 #: The per-alias leg suffix used when naming segmentation artefacts, derived
 #: from the fixture file name (``<date>_<leg index>``).
@@ -188,6 +226,11 @@ def _jsonable(value):
         # Keep the offset when the timestamp is tz-aware: the naive/aware split
         # is itself part of the behaviour a golden file should pin.
         return value.isoformat()
+    if isinstance(value, dict):
+        # A nested diagnostics dict (the discharge segments' public ``ep_audit``
+        # key) is serialised field by field under the same rules, keys sorted, so
+        # a golden pins every measured value rather than one opaque repr string.
+        return {str(key): _jsonable(value[key]) for key in sorted(value)}
     if isinstance(value, float):
         # NaN has no JSON spelling; a sentinel keeps the diff readable.
         return "NaN" if value != value else round(value, 6)

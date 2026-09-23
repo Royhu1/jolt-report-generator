@@ -196,10 +196,11 @@ def _blank_soc_estimate_row():
     return row
 
 
-def test_correct_effective_capacity_all_fallback_no_capacity_no_crash():
+def test_correct_effective_capacity_all_fallback_no_capacity_no_crash(caplog):
     """An un-onboarded EV with only soc_estimate legs and NO capacity source
     (fallback_kwh=None) must not crash on round(None); it returns cap=None and
     leaves the soc_estimate rows' capacity/energy as NaN."""
+    caplog.set_level("INFO", logger="report_generator.capacity")
     r1 = _blank_soc_estimate_row()
     r2 = _blank_soc_estimate_row()
     r1[_IDX_START] = pd.Timestamp("2025-04-01T08:00:00Z")
@@ -229,6 +230,9 @@ def test_correct_effective_capacity_all_fallback_no_capacity_no_crash():
     # Capacity could not be attributed → stays NaN (not 0, not a crash).
     for row in out_rows:
         assert pd.isna(row[_IDX_CAP])
+    # The missing global capacity is logged as nan rather than raising while the
+    # INFO line is formatted.
+    assert "global mean=nan kWh" in caplog.text
 
 
 # ── Generator wiring: no persist for runtime cfg; empty report is writable ────
