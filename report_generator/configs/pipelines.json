@@ -322,6 +322,7 @@
     "trip_endpoint_anchor": "zero_speed",
     "max_extend_minutes": 15.0,
     "mass_agg": "iqr_median",
+    "soc_event_spike_pct": 3.0,
     "charge_params": {
       "plateau_window_min": 60,
       "min_soc_rise": 5.0,
