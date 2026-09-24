@@ -246,7 +246,7 @@ should read the configs — never by file path:
 | Loader | Returns |
 |--------|---------|
 | `load_vehicle_configs()` | a fresh read of `vehicles.json` with the capacity ledger overlaid when `JOLT_CAPACITY_LEDGER` is set (without it: exactly the parsed file) |
-| `load_pipeline_configs()` | a fresh read of `pipelines.json` |
+| `load_pipeline_configs()` | a fresh read of `pipelines.json`, the keys with a checked value validated (see `configs/pipelines.json` below) |
 | `get_capacity_ledger_path()` | the external ledger file, or `None` when the variable is unset / empty |
 | `get_config_path(name)` | the path of a config file in the active directory |
 | `apply_capacity_ledger(vehicles, skip=None)` | makes the two ledger keys of configs already loaded (typically `VEHICLE_CONFIG`) what a fresh `load_vehicle_configs()` gives — for each registration also in `vehicles.json` and not skipped: the ledger's value, else the `vehicles.json` value, else no key — in place, and returns the ledger path; without the variable a strict no-op that reads nothing and returns `None` |
@@ -356,7 +356,9 @@ instead:
   so switching the pipeline alone could not). Everything else stays whole-vehicle: the
   column mappings describe the feed, the capacity keys and the ledger are the vehicle's
   battery state, `fuel_type` / `srf_reg` its identity, and the operator has its own
-  dated `operators` list.
+  dated `operators` list. The settings a pipeline carries (`reconcile_charge_boundaries`,
+  `soc_event_spike_pct`, `speed_params.keep_trips_outside_cap_band`, …) are not vehicle
+  settings: a window reaches them by switching its `pipeline` to one that sets them.
 - `load_vehicle_configs()`, and so the import-time load, rejects a malformed list with a
   `ValueError` naming the vehicle and the override: a key outside the allow-list, a
   value of the wrong kind (a flag that is not `true`/`false`, a duration or gap that is
@@ -464,6 +466,15 @@ re-derives that outlier's energy from `ΔSOC/100 × replacement_cap` and marks
 `Energy Source = 'soc_fallback'` when the dual gate fires (`|ΔSOC| ≥ 10` **and**
 `|orig−repl|/repl ≥ 0.30`).
 
+A trip kept outside the capacity band (`speed_params.keep_trips_outside_cap_band`, see
+*Segmentation algorithms*) has no capacity, so it takes no part in any of this: it is no
+donor — on the live path, and in the backfill, which reads its blank capacity cell as none
+— and it is not among the capacities the ±1σ pass judges, so the SOC-energy fallback
+never rewrites it either and it keeps its counter energy. The two opt-ins answer the same
+disagreement between counter energy and ΔSOC in opposite ways — the band key trusts the
+counter, the fallback trusts the SOC — so on a vehicle with `soc_energy_fallback`, a trip
+the band key keeps is one the fallback can no longer reach.
+
 **Persistence (ledger, `_persist_effective_capacity()`)**: after generation the period's
 donor capacity `(kwh, n)` — from `_period_capacity_from_rows()` on the corrected rows,
 **before** Stop insertion — is merged into `effective_capacity_quarterly[period_key]`,
@@ -497,9 +508,18 @@ nothing.
 | top level | `max_extend_minutes` | float, default 5.0; the zero_speed extension cap |
 | top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). The value feeds the Excel `Vehicle Mass (kg)` column and is re-used by the external figure / fine-tuning tooling. Vehicle-level override wins |
 | top level | `reconcile_charge_boundaries` | bool, default `false` (only JSON `true` switches it on): clamp a charge that overlaps a trip to the trip's boundary — see *Segmentation algorithms*. For a pipeline whose trips come from a higher-rate signal than its charges (Logger-speed trips on a sparse telematics feed); a vehicle reaches it through its `pipeline`, including a `period_overrides` window's |
+| top level | `soc_event_spike_pct` | positive number of SOC percentage points; absent = off. Before any detector reads the SOC, blank the SOC of each event row (`trigger_type` other than `TIMER`) that exceeds both the nearest preceding and the nearest following valid `TIMER`-row SOC by at least this much — see *Segmentation algorithms*. For a feed whose event rows can carry a stale SOC; no effect on a feed without a `trigger_type` column |
 | `charge_params` | `plateau_window_min` / `min_soc_rise` / `min_energy_kwh` | charge merge window + SOC-rise + energy thresholds |
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
 | `speed_params` | `speed_threshold_kmh` / `min_stop_duration_min` / `min_trip_duration_min` / `min_soc_drop` / `min_energy_kwh` | speed-branch trip boundaries + lenient SOC/energy checks |
+| `speed_params` | `keep_trips_outside_cap_band` | bool, default `false` (only `true` switches it on): keep a speed trip on counter energy whose SOC-implied capacity lies outside the capacity band, with no capacity, instead of dropping it — see *Segmentation algorithms* |
+
+`load_pipeline_configs()` — and so the import-time load — validates the two keys with a
+checked value: a `soc_event_spike_pct` that is not a positive number, a
+`keep_trips_outside_cap_band` that is not `true`/`false`, or either key where it is not
+read (the switch anywhere but in `speed_params`, the threshold inside a parameter group,
+which hands it to a detector as an unexpected argument) fails with a `ValueError` naming
+the pipeline and the key. The other keys are read as they stand.
 
 > Which fence suits a given vehicle depends on its GCVW channel (a bursty or
 > over-reading channel wants a robust fence). The schema and loader live here; the
@@ -513,6 +533,8 @@ entry point; parameters come from `PIPELINE_CONFIGS[pipeline]`:
 
 ```
 run_segment_detection
+  ├─ _blank_event_soc_spikes (opt-in pre-pass, soc_event_spike_pct: blank the SOC of
+  │                           event rows standing out above the periodic readings)
   ├─ branch=="soc":   find_charge_segments_by_soc + find_discharge_segments_by_soc
   ├─ branch=="speed": find_charge_segments_by_soc + find_discharge_segments_by_speed
   │                    (→ find_speed_trips; falls back to SOC if the speed column is missing/all-zero)
@@ -526,6 +548,29 @@ run_segment_detection
                                final anchors → the public ``ep_audit`` key; read-only)
 ```
 
+- **Event-row SOC spikes (opt-in pre-pass, `soc_event_spike_pct`)**: some feeds send a
+  periodic row (`trigger_type` `TIMER`) and, in between, a row per event — ignition on, a
+  change of charging status. On such a feed an event row can carry a stale SOC:
+  typically, after the vehicle has stood with the ignition off, the periodic rows have no
+  SOC for a while and the ignition-on row then reports a value a few points above the SOC
+  before and after it, which the charge detector reads as a short phantom charge worth
+  tens of kWh of `soc_estimate` energy. Before any detector reads the SOC, the pass sets
+  to NaN the SOC of each event row that exceeds **both** the nearest preceding and the
+  nearest following valid periodic SOC (valid: a number other than zero, which the
+  detectors read as missing) by at least the threshold. Periodic rows are the reference
+  and never change, and neither does an event row without a valid periodic reading on
+  both sides, one below its neighbours, or one without a parseable timestamp; neighbours
+  are found in time order. Blanking every event row's SOC would be wrong — it also
+  deletes real charges whose rise sits partly on event rows — while a genuine change of
+  charge persists into the next periodic reading, so the both-sides rule keeps it: a real
+  charge stays, one that ended on an excursion ends at the last reading that is not one,
+  and a charge with a short pause can then read as one session. The charges, the trips
+  (their SOC endpoints, and so the capacity their ΔSOC implies), the EP-confidence
+  diagnostics and the painter all work on the cleaned copy; the caller's frame, and so the
+  persisted raw telematics, keep the SOC as the feed sent it, and a renderer re-driving
+  `run_segment_detection` on them gets the same result. The number of readings blanked
+  per leg is logged. Without a `trigger_type` column there is nothing to judge a reading
+  by: the key does nothing, which is logged once per vehicle.
 - **Charge (`find_charge_segments_by_soc`)**: detect rising-SOC blocks, merge blocks
   ≤ `plateau_window_min` apart with no drop, validate `ΔSOC ≥ min_soc_rise` /
   `Δenergy ≥ min_energy_kwh` / capacity in `[cap_lo, cap_hi]`. Energy: AC+DC diff
@@ -537,7 +582,24 @@ run_segment_detection
 - **Discharge — speed branch (`find_discharge_segments_by_speed`)**: trip boundaries from
   `find_speed_trips()` (drive blocks with v > `speed_threshold_kmh`, bridge stops
   < `min_stop_duration_min`, drop trips < `min_trip_duration_min`); SOC/energy used only
-  for metrics. Both branches emit an identical segment schema.
+  for metrics, and a trip whose SOC-implied capacity `|ΔE| / (|ΔSOC|/100)` lies outside
+  `[cap_lo, cap_hi]` is dropped. Both branches emit an identical segment schema.
+- **Trips kept outside the capacity band (opt-in, `speed_params.keep_trips_outside_cap_band`)**:
+  on some feeds the energy comes from a counter that leaves out what the battery spends
+  while parked, while the integer SOC includes it, so short and medium trips imply too
+  small a capacity and real, speed-confirmed driving would vanish from the report — its
+  time turning into a Stop row that contains driving. With the key on, a speed trip whose
+  energy comes from a counter (`total_energy` / `moving_energy`) is kept when its implied
+  capacity falls outside the band, with `effective_capacity_kwh = None`: the speed signal
+  confirms the trip and the counter measures its energy, and only the capacity implied by
+  ΔSOC is untrustworthy. A trip without a capacity is never a capacity donor (see the
+  capacity model). The detector gives it a private marker so that the mass split, the
+  mass merge and the anchor ordering, which otherwise recompute a segment's capacity,
+  give nothing built from it a capacity either — a merge that takes in a kept trip
+  carries none, even where the combined figure would fall inside the band — and
+  `run_segment_detection` removes the marker once those steps have run, so the segments
+  leave with the public schema; the number of such trips per leg is logged. A trip on
+  `soc_estimate` energy is dropped as before: nothing measured its energy.
 - **Charge / trip boundary reconciliation (opt-in, `reconcile_charge_boundaries`)**: on a
   sparse telematics feed a charge ends at the first sample after the charging, which can
   be taken once the vehicle has set off — after the start of a trip found on the 1 Hz
@@ -571,7 +633,10 @@ net elevation change (`energy_correction.battery_elevation_energy_kwh`): uphill 
 kinetics correction. Empty numeric cells are the `=NA()` formula written with an **empty cached
 value** (`_write_na`): Excel recalculates them to `#N/A`, while non-recalculating readers
 (openpyxl `data_only=True`, `pandas.read_excel`) see a blank → NaN. Downstream readers
-must guard with a safe-number helper that tolerates both.
+must guard with a safe-number helper that tolerates both. A value the row builder leaves
+`None` rather than NaN — the `Battery Capacity (kWh)` of a trip without a capacity (no
+usable SOC change, or kept outside the capacity band) — is written as a plain blank
+cell, which those readers see the same way.
 
 **Graphs worksheet** — fixed-axis scatter + linear-fit charts from `CHART_SPECS_EV` /
 `CHART_SPECS_DIESEL` (selected by `chart_specs_for(headers)`) + one `CHART_STYLE`, so every
