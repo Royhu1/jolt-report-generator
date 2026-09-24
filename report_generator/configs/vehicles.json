@@ -855,7 +855,17 @@
     "moving_energy_col": "electric_energy_wheelbased_speed_over_zero",
     "mass_col": "gross_combination_vehicle_weight",
     "altitude_col": "gnss_altitude",
-    "min_cluster_gap_kg": 2000.0
+    "min_cluster_gap_kg": 2000.0,
+    "period_overrides": [
+      {
+        "from": "2026-07-07",
+        "reason": "Telematics feed thinned from July 2026 (sparse SOC, speed mostly missing): detect trips from the Logger V2 speed; days without Logger data keep the SOC algorithm through the speed branch's SOC fallback.",
+        "set": {
+          "pipeline": "mercedes_logger_speed",
+          "prefer_logger_speed": true
+        }
+      }
+    ]
   },
   "LN25NKE": {
     "srf_reg": "LN25 NKE",
