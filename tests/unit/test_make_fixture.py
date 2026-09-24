@@ -16,6 +16,7 @@ fixture, so its guarantees are privacy guarantees and are pinned here:
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import json
 from pathlib import Path
@@ -476,6 +477,65 @@ def test_a_diesel_frozen_entry_gets_a_dispatch_marker_not_a_pipeline():
 def test_the_fixture_kind_must_match_the_vehicle():
     with pytest.raises(ValueError, match="diesel fixture its logger CSV"):
         mf.frozen_entry(_LIVE_EV, _LIVE_PIPELINES, ALIAS, "diesel")
+
+
+# A live vehicle whose settings change on the date of the synthetic frame.
+_FRAME_DAY = datetime.date(2025, 6, 27)
+_LIVE_PIPELINES_BOTH = {
+    **_LIVE_PIPELINES,
+    "ut_soc_00": {"branch": "soc", "min_trip_distance_km": 1.0},
+}
+_LIVE_EV_SWITCHING = {
+    **_LIVE_EV,
+    "pipeline": "ut_soc_00",
+    "period_overrides": [
+        {
+            "from": _FRAME_DAY.isoformat(),
+            "to": None,
+            "reason": "the feed thinned out",
+            "set": {"pipeline": "ut_speed_01", "prefer_logger_speed": True},
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "when, pipeline, branch, logger_speed",
+    [
+        (_FRAME_DAY, "ut_speed_01", "speed", True),
+        (_FRAME_DAY - datetime.timedelta(days=1), "ut_soc_00", "soc", None),
+    ],
+    ids=["on the override", "before it"],
+)
+def test_a_switching_vehicle_is_frozen_as_it_applies_on_the_fixture_date(
+    when, pipeline, branch, logger_speed
+):
+    entry, frozen_pipeline = mf.frozen_entry(
+        _LIVE_EV_SWITCHING, _LIVE_PIPELINES_BOTH, ALIAS, "ev", when=when
+    )
+    assert "period_overrides" not in entry
+    assert entry["pipeline"] == f"evut01_{branch}"
+    assert entry.get("prefer_logger_speed") is logger_speed
+    assert frozen_pipeline == (f"evut01_{branch}", _LIVE_PIPELINES_BOTH[pipeline])
+
+
+def test_the_cli_freezes_a_switching_vehicle_for_the_frames_date(
+    scratch_fixtures, monkeypatch
+):
+    root, source = scratch_fixtures
+    monkeypatch.setattr(
+        mf,
+        "_live_configs",
+        lambda: ({"UT73ABC": _LIVE_EV_SWITCHING}, _LIVE_PIPELINES_BOTH),
+    )
+    argv = [str(source), "--alias", ALIAS, "--config-from", "UT73ABC"]
+    assert mf.main(argv) == 0
+    frozen = json.loads((root / "configs" / "vehicles.json").read_text("utf-8"))
+    assert "period_overrides" not in frozen[ALIAS]
+    assert frozen[ALIAS]["pipeline"] == "evut01_speed"
+    assert frozen[ALIAS]["prefer_logger_speed"] is True
+    pipelines = json.loads((root / "configs" / "pipelines.json").read_text("utf-8"))
+    assert pipelines == {"evut01_speed": _LIVE_PIPELINES_BOTH["ut_speed_01"]}
 
 
 # ── The CLI, against a scratch fixture tree ──────────────────────────────────

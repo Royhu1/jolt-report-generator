@@ -174,7 +174,10 @@ the fleet. From the repository root, with a report generated for the vehicle wit
 
    This writes `raw/<ALIAS>/<file>`, registers it in `raw_fixtures.json` and, with
    `--config-from`, adds the alias's frozen config: a copy of the live entry (and, for
-   an EV, its pipeline as `<alias>_<branch>`) without identity or ledger fields. The
+   an EV, its pipeline as `<alias>_<branch>`) without identity or ledger fields. A
+   vehicle with date-effective settings (`period_overrides`) is frozen as they apply on
+   the fixture's date — the UTC date of its first timestamp — so the frozen entry has no
+   overrides and names the pipeline that leg is really segmented with. The
    registration is taken from the artefact path (or `--registration`) and the tool
    refuses to write if it survives anywhere. Nothing is written if a check fails;
    `--force` replaces an existing alias.
