@@ -10,12 +10,17 @@ import numpy as np
 import pandas as pd
 
 from .constants import (
+    _CAPACITY_OUTSIDE_BAND_KEY,
     MOVING_COL,
     ODO_COL,
     SOC_COL,
     TIME_COL,
     TOTAL_ENERGY_COL,
 )
+
+# Energy sources that are a difference of a measured energy counter, rather than
+# ΔSOC × capacity.
+_COUNTER_ENERGY_SOURCES = frozenset({"total_energy", "moving_energy"})
 
 
 # =============================================================================
@@ -210,6 +215,7 @@ def find_discharge_segments_by_speed(
     trips: list[tuple] | None = None,
     trip_endpoint_anchor: str = "zero_speed",
     max_extend_minutes: float = 5.0,
+    keep_trips_outside_cap_band: bool = False,
 ) -> list[dict]:
     """
     Speed-based discharge trip segmentation: detect trip boundaries from speed, use SOC/energy to compute metrics.
@@ -226,6 +232,19 @@ def find_discharge_segments_by_speed(
     Parameters
     ----------
     See the parameter descriptions in find_speed_trips() and find_discharge_segments_by_soc().
+
+    keep_trips_outside_cap_band : a trip whose SOC-implied capacity
+        ``|ΔE| / (|ΔSOC|/100)`` lies outside ``[cap_lo, cap_hi]`` is dropped by
+        default. With this set (only ``True`` switches it on), a trip whose
+        energy comes from a measured counter (``total_energy`` /
+        ``moving_energy``) is kept instead, with ``effective_capacity_kwh``
+        ``None``: the speed signal confirms the trip and the counter measures its
+        energy, so only the capacity implied by ΔSOC is implausible — a counter
+        that excludes what the battery spends while parked, against an integer
+        SOC that includes it, say — and a trip without a capacity is never a
+        capacity donor. It also carries a private marker so the mass split and
+        merge and the anchor ordering give nothing built from it a capacity
+        either. A trip on ``soc_estimate`` energy is dropped as before.
 
     Returns
     -------
@@ -390,11 +409,21 @@ def find_discharge_segments_by_speed(
             continue
 
         # Effective capacity: computable only when SOC has an actual decline
+        capacity_outside_band = False
         if delta_soc_abs > 0:
             eff_cap = abs(delta_energy_kwh) / (delta_soc_abs / 100.0)
             if cap_lo is not None and cap_hi is not None:
                 if not (cap_lo <= eff_cap <= cap_hi):
-                    continue
+                    if not (
+                        keep_trips_outside_cap_band is True
+                        and energy_source in _COUNTER_ENERGY_SOURCES
+                    ):
+                        continue
+                    # Opt-in: the trip stands (speed-confirmed, counter-measured
+                    # energy); only its SOC-implied capacity is implausible, so
+                    # it carries none and is no capacity donor.
+                    eff_cap = None
+                    capacity_outside_band = True
         else:
             eff_cap = None
 
@@ -425,30 +454,31 @@ def find_discharge_segments_by_speed(
         else:
             lat_s = lon_s = lat_e = lon_e = None
 
-        segments.append(
-            {
-                "start_time": trip_start,
-                "end_time": trip_end,
-                "start_soc": round(soc_s, 2),
-                "end_soc": round(soc_e, 2),
-                "delta_soc_pct": round(delta_soc_signed, 2),
-                "delta_energy_kwh": round(delta_energy_kwh, 3),
-                "energy_source": energy_source,
-                "delta_moving_kwh": delta_moving,
-                "effective_capacity_kwh": (
-                    round(eff_cap, 1) if eff_cap is not None else None
-                ),
-                "odo_start_km": round(odo_s, 3) if np.isfinite(odo_s) else None,
-                "odo_end_km": round(odo_e, 3) if np.isfinite(odo_e) else None,
-                "lat_start": lat_s,
-                "lon_start": lon_s,
-                "lat_end": lat_e,
-                "lon_end": lon_e,
-                "_anchor_start_time": anchor_s_time,
-                "_anchor_end_time": anchor_e_time,
-                "_anchor_start_rel_kwh": anchor_s_rel,
-                "_anchor_end_rel_kwh": anchor_e_rel,
-            }
-        )
+        seg = {
+            "start_time": trip_start,
+            "end_time": trip_end,
+            "start_soc": round(soc_s, 2),
+            "end_soc": round(soc_e, 2),
+            "delta_soc_pct": round(delta_soc_signed, 2),
+            "delta_energy_kwh": round(delta_energy_kwh, 3),
+            "energy_source": energy_source,
+            "delta_moving_kwh": delta_moving,
+            "effective_capacity_kwh": (
+                round(eff_cap, 1) if eff_cap is not None else None
+            ),
+            "odo_start_km": round(odo_s, 3) if np.isfinite(odo_s) else None,
+            "odo_end_km": round(odo_e, 3) if np.isfinite(odo_e) else None,
+            "lat_start": lat_s,
+            "lon_start": lon_s,
+            "lat_end": lat_e,
+            "lon_end": lon_e,
+            "_anchor_start_time": anchor_s_time,
+            "_anchor_end_time": anchor_e_time,
+            "_anchor_start_rel_kwh": anchor_s_rel,
+            "_anchor_end_rel_kwh": anchor_e_rel,
+        }
+        if capacity_outside_band:
+            seg[_CAPACITY_OUTSIDE_BAND_KEY] = True
+        segments.append(seg)
 
     return segments

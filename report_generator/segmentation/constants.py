@@ -3,7 +3,8 @@ Segmentation shared constants and configuration loading.
 
 Raw-telemetry column-name constants (overridable per vehicle via
 ``VEHICLE_CONFIG``), the mass-clustering default thresholds, the private
-anchor-key set, and the SINGLE load site of ``VEHICLE_CONFIG`` /
+segment keys (the anchor set, the capacity-band marker), and the SINGLE load
+site of ``VEHICLE_CONFIG`` /
 ``PIPELINE_CONFIGS`` (shared by reference across the package — every other
 module imports these bindings; do not add a second load site).
 
@@ -47,6 +48,14 @@ _ANCHOR_PRIVATE_KEYS: frozenset = frozenset(
         "_anchor_end_rel_kwh",
     }
 )
+
+# Marks a discharge segment kept although its SOC-implied capacity lies outside
+# the capacity band (``speed_params.keep_trips_outside_cap_band``), or built by
+# the mass split or merge from such a segment. It carries no capacity, and the
+# split, the merge and the anchor ordering keep it that way, so it never becomes
+# a capacity donor. Only that opt-in path sets it, and ``run_segment_detection``
+# removes it once those steps have run.
+_CAPACITY_OUTSIDE_BAND_KEY = "_capacity_outside_band"
 
 # ── Config loading (from JSON files) ─────────────────────────────────────────
 from report_generator.configs import (

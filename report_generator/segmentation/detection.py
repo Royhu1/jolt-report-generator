@@ -18,6 +18,7 @@ from pandas.api.types import is_float_dtype, is_object_dtype
 from ..configs import _is_positive_number, effective_vehicle_config
 from ..ep_confidence import attach_ep_audits
 from .constants import (
+    _CAPACITY_OUTSIDE_BAND_KEY,
     AC_COL,
     DC_COL,
     MASS_COL,
@@ -103,7 +104,10 @@ def run_segment_detection(
     stand out above the periodic readings blanked
     (:func:`_blank_event_soc_spikes`) before any detector reads it, so the
     charges, the trips, their diagnostics and the painter all work on the same
-    cleaned frame; the caller's ``df_raw`` is never modified.
+    cleaned frame; the caller's ``df_raw`` is never modified. A pipeline whose
+    ``speed_params`` set ``keep_trips_outside_cap_band`` keeps the speed trips on
+    counter energy that the capacity band would drop, with no capacity (see
+    :func:`find_discharge_segments_by_speed`).
 
     Parameters
     ----------
@@ -264,6 +268,8 @@ def run_segment_detection(
         if _min_stop_override is not None:
             speed_p["min_stop_duration_min"] = float(_min_stop_override)
         # Pass the energy columns and capacity parameters from the vehicle config
+        # (the pipeline's own speed_params, keep_trips_outside_cap_band included,
+        # reach the detector as they are)
         speed_p["total_energy_col"] = _tot_col
         speed_p["moving_energy_col"] = _mov_col
         if _soc_est_cap:
@@ -479,6 +485,23 @@ def run_segment_detection(
                 reg,
                 suffix,
             )
+
+    # ── Trips kept outside the capacity band (opt-in, per pipeline) ────────
+    # Their private marker kept the split, the merge and the anchor ordering
+    # from giving them (or anything built from them) a capacity; those steps
+    # have run, so it is dropped and the segments leave with the public schema.
+    _n_outside_band = 0
+    for _seg in discharge_segs:
+        if _seg.pop(_CAPACITY_OUTSIDE_BAND_KEY, None):
+            _n_outside_band += 1
+    if _n_outside_band:
+        logger.info(
+            "  capacity band: %d trips on counter energy kept without a capacity, "
+            "their SOC-implied capacity lying outside the band (%s %s)",
+            _n_outside_band,
+            reg,
+            suffix,
+        )
 
     # ── EP-confidence diagnostics ──────────────────────────────────────────
     # Measure (never modify) each final discharge segment's energy / distance

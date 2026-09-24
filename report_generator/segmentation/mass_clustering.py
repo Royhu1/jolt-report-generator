@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .constants import (
+    _CAPACITY_OUTSIDE_BAND_KEY,
     MASS_COL,
     MIN_CLUSTER_GAP_KG,
     MOVING_SPEED_THRESHOLD_KMH,
@@ -352,13 +353,16 @@ def _split_seg_at_times(
     - start_soc / end_soc : linearly interpolated from the raw data
     - delta_soc_pct       : end_soc - start_soc (negative)
     - delta_energy_kwh    : allocated proportionally from the parent segment by SOC
-    - effective_capacity_kwh : |delta_energy| / (|delta_soc| / 100)
+    - effective_capacity_kwh : |delta_energy| / (|delta_soc| / 100); ``None`` for
+                            every sub-segment of a segment kept outside the
+                            capacity band, which pass its marker on
     - odo / lat / lon     : nearest-value lookup from the raw data
     - _anchor_*           : set to None (anchors are meaningless after proportional allocation)
 
     Sub-segments that do not meet min_soc_drop or min_energy_kwh are dropped.
     If there are ultimately no valid sub-segments, returns [seg] (the original segment).
     """
+    outside_band = bool(seg.get(_CAPACITY_OUTSIDE_BAND_KEY))
     t_seg_s = _to_utc(seg["start_time"])
     t_seg_e = _to_utc(seg["end_time"])
 
@@ -466,7 +470,7 @@ def _split_seg_at_times(
 
         sub_effcap = (
             abs(sub_denergy) / (abs(sub_dsoc) / 100.0)
-            if abs(sub_dsoc) > 0
+            if abs(sub_dsoc) > 0 and not outside_band
             else float("nan")
         )
 
@@ -492,31 +496,34 @@ def _split_seg_at_times(
             else _latlon_at(sub_t_e, "end")
         )
 
-        result.append(
-            {
-                "start_time": sub_t_s,
-                "end_time": sub_t_e,
-                "start_soc": round(sub_soc_s, 2),
-                "end_soc": round(sub_soc_e, 2),
-                "delta_soc_pct": round(sub_dsoc, 2),
-                "delta_energy_kwh": round(sub_denergy, 3),
-                "energy_source": seg.get("energy_source"),
-                "delta_moving_kwh": None,
-                "effective_capacity_kwh": (
-                    round(sub_effcap, 1) if np.isfinite(sub_effcap) else None
-                ),
-                "odo_start_km": round(sub_odo_s, 3) if np.isfinite(sub_odo_s) else None,
-                "odo_end_km": round(sub_odo_e, 3) if np.isfinite(sub_odo_e) else None,
-                "lat_start": lat_s,
-                "lon_start": lon_s,
-                "lat_end": lat_e,
-                "lon_end": lon_e,
-                "_anchor_start_time": None,
-                "_anchor_end_time": None,
-                "_anchor_start_rel_kwh": float("nan"),
-                "_anchor_end_rel_kwh": float("nan"),
-            }
-        )
+        sub = {
+            "start_time": sub_t_s,
+            "end_time": sub_t_e,
+            "start_soc": round(sub_soc_s, 2),
+            "end_soc": round(sub_soc_e, 2),
+            "delta_soc_pct": round(sub_dsoc, 2),
+            "delta_energy_kwh": round(sub_denergy, 3),
+            "energy_source": seg.get("energy_source"),
+            "delta_moving_kwh": None,
+            "effective_capacity_kwh": (
+                round(sub_effcap, 1) if np.isfinite(sub_effcap) else None
+            ),
+            "odo_start_km": round(sub_odo_s, 3) if np.isfinite(sub_odo_s) else None,
+            "odo_end_km": round(sub_odo_e, 3) if np.isfinite(sub_odo_e) else None,
+            "lat_start": lat_s,
+            "lon_start": lon_s,
+            "lat_end": lat_e,
+            "lon_end": lon_e,
+            "_anchor_start_time": None,
+            "_anchor_end_time": None,
+            "_anchor_start_rel_kwh": float("nan"),
+            "_anchor_end_rel_kwh": float("nan"),
+        }
+        if outside_band:
+            # The share of a trip kept outside the capacity band has the same
+            # SOC-implied capacity as the trip itself, so none either.
+            sub[_CAPACITY_OUTSIDE_BAND_KEY] = True
+        result.append(sub)
 
     return result if result else [seg]
 
@@ -697,8 +704,13 @@ def _merge_two_discharge_segs(seg_a: dict, seg_b: dict) -> dict:
         if np.isfinite(fa) and np.isfinite(fb):
             denergy = fa + fb
 
+    # A merge that takes in a trip kept outside the capacity band inherits its
+    # untrustworthy SOC-implied capacity, so it carries none either.
+    outside_band = bool(
+        seg_a.get(_CAPACITY_OUTSIDE_BAND_KEY) or seg_b.get(_CAPACITY_OUTSIDE_BAND_KEY)
+    )
     effcap = float("nan")
-    if np.isfinite(denergy) and abs(dsoc) > 0:
+    if np.isfinite(denergy) and abs(dsoc) > 0 and not outside_band:
         effcap = abs(denergy) / (abs(dsoc) / 100.0)
 
     # Prefer higher-priority energy source
@@ -720,7 +732,7 @@ def _merge_two_discharge_segs(seg_a: dict, seg_b: dict) -> dict:
     a_start = seg_a.get("_anchor_start_time")
     a_end = seg_b.get("_anchor_end_time")
 
-    return {
+    merged = {
         "start_time": _to_utc(seg_a["start_time"]),
         "end_time": _to_utc(seg_b["end_time"]),
         "start_soc": soc_s,
@@ -741,6 +753,9 @@ def _merge_two_discharge_segs(seg_a: dict, seg_b: dict) -> dict:
         "_anchor_start_rel_kwh": seg_a.get("_anchor_start_rel_kwh", float("nan")),
         "_anchor_end_rel_kwh": seg_b.get("_anchor_end_rel_kwh", float("nan")),
     }
+    if outside_band:
+        merged[_CAPACITY_OUTSIDE_BAND_KEY] = True
+    return merged
 
 
 def merge_discharge_by_mass(
@@ -871,7 +886,8 @@ def _enforce_anchor_ordering(discharge_segs: list[dict], reg: str = "") -> int:
     ``_recompute_anchors``, on the **final** discharge segments: it clamps the
     overlapping previous segment's ``_anchor_end_time`` to the next segment's
     ``_anchor_start_time`` and recomputes ``delta_energy_kwh`` and
-    ``effective_capacity_kwh`` from the anchor relative values (already in kWh).
+    ``effective_capacity_kwh`` from the anchor relative values (already in kWh);
+    a segment kept outside the capacity band keeps no capacity.
     Only segments with an actual overlap are modified (the sparse-counter case);
     when the counter has readings in the gap there is no overlap → no change.
 
@@ -935,7 +951,9 @@ def _enforce_anchor_ordering(discharge_segs: list[dict], reg: str = "") -> int:
         cur["_anchor_end_rel_kwh"] = new_end_rel
         cur["delta_energy_kwh"] = round(new_delta, 3)
         dsoc_abs = abs(cur.get("delta_soc_pct") or 0.0)
-        if dsoc_abs > 0:
+        # A trip kept outside the capacity band keeps its missing capacity: the
+        # clamp corrects the energy, not the SOC the implied capacity rests on.
+        if dsoc_abs > 0 and not cur.get(_CAPACITY_OUTSIDE_BAND_KEY):
             cur["effective_capacity_kwh"] = round(
                 abs(new_delta) / (dsoc_abs / 100.0), 1
             )
