@@ -21,7 +21,7 @@ Consumers read the configs through the loaders below, never by file path:
   get_config_path(name)       path of a config file in the active directory
   get_capacity_ledger_path()  the external capacity-ledger file, or None
   load_vehicle_configs()      a fresh read of vehicles.json, ledger overlaid
-  load_pipeline_configs()     a fresh read of pipelines.json
+  load_pipeline_configs()     a fresh read of pipelines.json, checked keys validated
   apply_capacity_ledger(v)    bring the ledger keys of loaded configs up to date
   effective_vehicle_config(cfg, when)
                               a vehicle's settings as they apply on a date
@@ -130,6 +130,22 @@ PERIOD_OVERRIDE_KEYS: tuple[str, ...] = tuple(_PERIOD_OVERRIDE_VALUES)
 _PERIOD_OVERRIDE_FIELDS = ("from", "to", "reason", "set")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+#: The ``pipelines.json`` keys whose value the loader checks, by where they sit —
+#: at the top level of a pipeline, or in its ``speed_params`` — each with the
+#: check its value must pass. Absent means off for both.
+_PIPELINE_TOP_LEVEL_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
+    "soc_event_spike_pct": (
+        _is_positive_number,
+        "a positive number of SOC percentage points",
+    ),
+}
+_PIPELINE_SPEED_PARAMS_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
+    "keep_trips_outside_cap_band": (_is_flag, "true or false"),
+}
+
+#: A pipeline's parameter groups, each handed to a detector as keyword arguments.
+_PIPELINE_PARAM_GROUPS = ("charge_params", "discharge_params", "speed_params")
+
 
 def get_config_path(name: str) -> Path:
     """Return the absolute path to ``name`` under the active config directory.
@@ -156,8 +172,18 @@ def get_capacity_ledger_path() -> Path | None:
 
 
 def load_pipeline_configs() -> dict:
-    """Return a fresh read of ``pipelines.json`` from the active directory."""
-    return _load_config_json("pipelines.json")
+    """Return a fresh read of ``pipelines.json`` from the active directory.
+
+    The keys with a checked value are validated here, so a malformed one fails
+    the load — at import too, which goes through this function — with a
+    ``ValueError`` naming the pipeline and the key: ``soc_event_spike_pct``
+    (top level) that is not a positive number, ``keep_trips_outside_cap_band``
+    (in ``speed_params``) that is not ``true`` / ``false``, or either key in the
+    wrong place, where it would be silently ignored or break a detector.
+    """
+    pipelines = _load_config_json("pipelines.json")
+    _validate_pipeline_configs(pipelines)
+    return pipelines
 
 
 def load_vehicle_configs() -> dict:
@@ -283,6 +309,59 @@ def _load_vehicle_configs(ledger_path: Path | None) -> dict:
     if ledger_path is not None:
         _overlay_capacity_ledger(vehicles, _read_capacity_ledger(ledger_path))
     return vehicles
+
+
+# ── Pipeline keys with a checked value ─────────────────────────────────────
+
+
+def _validate_pipeline_configs(pipelines: dict) -> None:
+    """Raise ``ValueError`` for the first malformed checked key in ``pipelines``.
+
+    Checks only the keys of :data:`_PIPELINE_TOP_LEVEL_VALUES` and
+    :data:`_PIPELINE_SPEED_PARAMS_VALUES`: the value of each, and that each sits
+    where it is read. A top-level key misplaced into a parameter group would
+    reach a detector as an unexpected keyword argument; a ``speed_params`` key at
+    the top level would be ignored, as it would in the charge or discharge
+    parameters, which it would also break. Anything else in a pipeline is left
+    to the code that reads it.
+    """
+    for name, pipeline in pipelines.items():
+        if not isinstance(pipeline, dict):
+            continue
+        where = f"pipelines.json: {name}"
+        for key, (check, kind) in _PIPELINE_TOP_LEVEL_VALUES.items():
+            if key in pipeline and not check(pipeline[key]):
+                raise ValueError(
+                    f"{where}: {key} must be {kind}, not {pipeline[key]!r}"
+                )
+        for key in _PIPELINE_SPEED_PARAMS_VALUES:
+            if key in pipeline:
+                raise ValueError(
+                    f"{where}: {key} belongs in speed_params, not at the top level "
+                    "of the pipeline"
+                )
+        for group in _PIPELINE_PARAM_GROUPS:
+            params = pipeline.get(group)
+            if not isinstance(params, dict):
+                continue
+            for key in _PIPELINE_TOP_LEVEL_VALUES:
+                if key in params:
+                    raise ValueError(
+                        f"{where}: {key} belongs at the top level of the "
+                        f"pipeline, not in {group}"
+                    )
+            for key, (check, kind) in _PIPELINE_SPEED_PARAMS_VALUES.items():
+                if key not in params:
+                    continue
+                if group != "speed_params":
+                    raise ValueError(
+                        f"{where}: {key} belongs in speed_params, not in {group}"
+                    )
+                if not check(params[key]):
+                    raise ValueError(
+                        f"{where}: speed_params.{key} must be {kind}, "
+                        f"not {params[key]!r}"
+                    )
 
 
 # ── Date-effective settings: validation and window parsing ───────────────────

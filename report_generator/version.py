@@ -7,7 +7,7 @@ no dist metadata to look up. Bump ``__version__`` here and append a section to
 
 from __future__ import annotations
 
-__version__ = "3.7.0"
+__version__ = "3.8.0"
 
 # Active report-data namespace under ``excel_report_database/``. A release that
 # can change report cells advances this alongside ``__version__``; a release

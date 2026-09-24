@@ -96,6 +96,7 @@ from report_generator.segmentation.constants import (  # noqa: F401
     TIME_COL,
     TOTAL_ENERGY_COL,
     TRACTOR_ONLY_MAX_KG,
+    TRIGGER_TYPE_COL,
     VEHICLE_CONFIG,
     _load_json,
 )

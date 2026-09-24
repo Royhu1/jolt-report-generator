@@ -856,3 +856,111 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   charge; every golden byte-identical with the key off and on).
 
   Full suite: **1312 passed, 4 skipped** (3.6.0: 1183 passed, 4 skipped).
+
+## 3.8.0 — event-row SOC filter and trips kept outside the capacity band (both opt-in)
+
+- **Report output: unchanged for every configured vehicle — both keys are opt-in and no
+  pipeline sets them.** Data namespace: unchanged, still `3.3.0/`. Verified offline: the
+  three EV fixture workbooks built through `JOLTReportGenerator.generate_report` itself —
+  the per-leg loop, capacity correction, EP grading, Stop insertion and writer, over a
+  mocked SRF surface — match 3.7.0 in all 6511 cells, with identical capacity ledgers;
+  every registered fixture regenerates its golden byte for byte, also with
+  `keep_trips_outside_cap_band: false`; and a replay of the segmentation over 7935
+  persisted raw telematics legs of the 16 configured EV vehicles (9213 charges, 41726
+  trips) gives identical segments under 3.7.0 and 3.8.0.
+- **Why.** Two segmentation defects on a telematics feed that sends 60-s periodic rows
+  (`trigger_type` `TIMER`) and event rows in between, both confirmed by running the
+  package's own functions on the raw frames:
+  - *Phantom charges from event-row SOC spikes.* After the vehicle has stood with the
+    ignition off, the periodic rows carry no SOC for minutes, and the ignition-on row then
+    reports a SOC 4–6 points above the value before and after it (58, four missing, 64,
+    60). The SOC charge detector turns each such step into a charge of 0.4 to 28 minutes
+    with about 20 kWh of `soc_estimate` energy — 13 of the 55 charges detected on that
+    feed. Across its raw data, 51 event rows exceed both neighbouring periodic
+    readings by 3 points or more, and no periodic row does.
+  - *Genuine trips dropped by the capacity band.* The speed branch drops a trip whose
+    SOC-implied capacity `|ΔE| / (|ΔSOC|/100)` falls outside `nominal × [0.5, 2.0]`. On
+    this feed the energy is the moving-energy counter, while the integer SOC also falls
+    while parked and is quantised, so short and medium trips imply capacities below the
+    floor: 23 speed-confirmed trips with good counter energy (275 km, 246 kWh, up to 62 km
+    each) vanished from the report, their time turned into Stop rows containing driving.
+- **`soc_event_spike_pct`** (new pipeline key, top level; a positive number of SOC
+  percentage points, absent = off). `run_segment_detection`, before any detector reads
+  the SOC and when the frame has a `trigger_type` column, sets to NaN the SOC of each
+  event row (`trigger_type` other than `TIMER`, matched without regard to case) that
+  exceeds both the nearest preceding and the nearest following valid `TIMER` SOC (valid:
+  a number other than 0) by at least the threshold. `TIMER` rows never change, nor does
+  an event row without a valid periodic reading on both sides, one below its neighbours
+  or one without a parseable timestamp; neighbours are found in time order. Blanking
+  every event row's SOC was tried and rejected: it also deletes real charges whose rise
+  sits partly on event rows. The charges, the trips, the EP-confidence diagnostics and the
+  painter (`figure_hook`'s `df_raw`) all see the cleaned copy; the caller's frame — and so
+  the raw telematics the generator persists — is never modified. The number of readings
+  blanked per leg is logged; without a `trigger_type` column the key does nothing, logged
+  once per vehicle. On the diagnosed feed, at 3 points, it blanks exactly those 51
+  readings: the 13 phantom charges go, every genuine charge stays (one with a two-minute
+  pause reads as one session, one that ended on an excursion ends at its last genuine
+  reading), five trips the band had dropped for a spike-inflated ΔSOC come back into the
+  band, and four trips whose start SOC was a spike get a smaller ΔSOC.
+- **`speed_params.keep_trips_outside_cap_band`** (new; bool, default `false`, only `true`
+  switches it on). In `find_discharge_segments_by_speed` (new keyword of the same name),
+  a trip whose implied capacity falls outside the band and whose energy comes from a
+  counter (`total_energy` / `moving_energy`) is kept with `effective_capacity_kwh = None`
+  instead of dropped; a trip on `soc_estimate` energy is dropped as before. A trip without
+  a capacity is no capacity donor (`_period_capacity_from_rows`, the step-1 donor pools,
+  the ±1σ pass, and the backfill, which reads its blank cell as none). A private segment
+  marker, `_capacity_outside_band`, makes the mass split, the mass merge and the anchor
+  ordering — the three steps that otherwise recompute a segment's capacity — give nothing
+  built from a kept trip a capacity either (a merge taking in a kept trip carries none,
+  even where the combined figure would fall inside the band); `run_segment_detection`
+  removes the marker before the diagnostics, the painter and the caller see the
+  segments. The per-leg number of such trips is logged. On the diagnosed feed it keeps
+  exactly the 23 trips, 274.8 km and 246.0 kWh, every other trip unchanged; with both keys
+  on, 18 trips remain without a capacity.
+- **Interaction with `soc_energy_fallback`.** The band key trusts the counter where it
+  and ΔSOC disagree; the per-vehicle SOC-energy fallback trusts the SOC. A kept trip has
+  no capacity, so the ±1σ pass never judges it and the fallback cannot rewrite it: it
+  keeps its counter energy (on the speed fixture, whose vehicle has the fallback on, the
+  merged kept trip reports 48.7 kWh from the counter, graded `poor` with `CAP_INCONS`,
+  where the fallback wrote 150.3 kWh without the key). Enable the band key on a vehicle
+  with the fallback only deliberately.
+- **Validation.** `load_pipeline_configs()` — and so the import-time load of
+  `PIPELINE_CONFIGS` — now validates these two keys: a threshold that is not a positive
+  number, a switch that is not `true`/`false`, the switch anywhere but in `speed_params`,
+  or the threshold inside a parameter group (where it would reach a detector as an
+  unexpected argument) fails with a `ValueError` naming the pipeline and the key. No other
+  pipeline key is validated, as before. A threshold that bypasses the loader (injected at
+  run time) is refused by `run_segment_detection` in the same terms.
+- **`period_overrides`.** The allow-list is unchanged: the new keys are pipeline settings,
+  not vehicle settings, and a window reaches them by switching its `pipeline` to one that
+  sets them — as for `reconcile_charge_boundaries`.
+- **Callers outside the package.** A renderer re-driving `run_segment_detection` gets the
+  same segments as the generator and the cleaned frame in `figure_hook`. New name:
+  `segmentation.constants.TRIGGER_TYPE_COL` (also on the `segmentation` and
+  `segment_algorithms` surfaces). A segment returned by `find_discharge_segments_by_speed`
+  itself may carry the private marker; `run_segment_detection` never returns it.
+- **Test suite.** New: 36 unit tests of the event-row filter (the parked ignition-on
+  excursion, several event rows of one excursion, the excursion ending a real charge, a
+  rise carried by event rows kept, `TIMER` readings never touched, the inclusive
+  threshold, one side below it, a reading below its neighbours, no periodic reading on
+  one side, a zero periodic SOC skipped as a reference, rows without a timestamp, time
+  order over row order, any index, a row without a trigger type, case and padding, a
+  frame without the column returned as it is, the caller's frame untouched, the SOC
+  column's type, an invalid threshold refused, the once-per-vehicle and per-leg logs, and
+  through `run_segment_detection`: the phantom charge with and without the key, the
+  painter handed the cleaned frame, no `trigger_type` no change); 25 unit tests of the
+  band key (below and above the band, both counters, `soc_estimate` dropped, in-band and
+  unbounded trips unchanged, only `true` switching it on, the split, merge and anchor
+  clamp of a kept trip and of an ordinary one, the orchestrator keeping it without the
+  marker, a kept trip split at a load change, the row, the donor exclusion, the
+  generator's `_finalize_rows` and the workbook read back by the backfill); 28 unit tests
+  of the validation (valid values, each wrong kind, each misplacement, the pipeline named,
+  the import-time load in a fresh interpreter); 10 fixture-driven integration tests (every
+  golden with the band key off; the filter trimming the excursion that ends a real charge
+  and leaving legs without one, or without the column, as their goldens; the painter
+  handed the filtered leg; the band key a no-op where every trip is in the band, and on a
+  fixture with a band-dropped trip bringing it back, merged, without a capacity, every
+  other trip untouched, through finalisation and the workbook); and 1 live-config
+  structure test.
+
+  Full suite: **1412 passed, 4 skipped** (3.7.0: 1312 passed, 4 skipped).

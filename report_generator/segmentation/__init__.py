@@ -48,6 +48,7 @@ from .constants import (
     TIME_COL,
     TOTAL_ENERGY_COL,
     TRACTOR_ONLY_MAX_KG,
+    TRIGGER_TYPE_COL,
     VEHICLE_CONFIG,
     _load_json,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "TOTAL_ENERGY_COL",
     "MASS_COL",
     "RECUP_COL",
+    "TRIGGER_TYPE_COL",
     "MIN_CLUSTER_GAP_KG",
     "TRACTOR_ONLY_MAX_KG",
     "MOVING_SPEED_THRESHOLD_KMH",
