@@ -76,3 +76,11 @@ def test_at_least_one_diesel_and_one_ev():
     ev = [r for r, c in VEHICLES.items() if not _is_diesel(c)]
     assert diesel, "expected at least one diesel vehicle in the fixture set"
     assert ev, "expected at least one EV vehicle in the fixture set"
+
+
+def test_pipelines_pass_the_loader_validation():
+    # The checked pipeline keys (soc_event_spike_pct, keep_trips_outside_cap_band):
+    # well-formed wherever a pipeline sets them. Structure only, no value asserted.
+    from report_generator.configs import _validate_pipeline_configs
+
+    _validate_pipeline_configs(PIPELINES)
