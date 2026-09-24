@@ -26,7 +26,9 @@ The tool
    ``tests/fixtures/raw_fixtures.json``;
 6. with ``--config-from <REG>``, adds the frozen config entry for the alias —
    a copy of the live entry (and, for an EV, its pipeline under an alias name)
-   with the identity and state fields removed.
+   with the identity and state fields removed; an entry with date-effective
+   settings (``period_overrides``) is copied as it applies on the fixture's
+   date.
 
 Then generate the fixture's first golden and run the suite:
 
@@ -39,6 +41,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import copy
+import datetime
 import io
 import json
 import os
@@ -380,7 +383,12 @@ def _dump_json(path: Path, payload: dict) -> None:
 
 
 def frozen_entry(
-    live_vehicle: dict, live_pipelines: dict, alias: str, kind: str
+    live_vehicle: dict,
+    live_pipelines: dict,
+    alias: str,
+    kind: str,
+    *,
+    when: datetime.date | None = None,
 ) -> tuple[dict, tuple[str, dict] | None]:
     """The frozen alias config (and, for an EV, its pipeline) from a live entry.
 
@@ -389,7 +397,15 @@ def frozen_entry(
     alias name, ``<alias>_<branch>``, so the fixture can never resolve a live
     pipeline; a diesel vehicle's ``pipeline`` is a dispatch marker only
     (``<alias>_diesel_logger``), exactly as for the live diesel vehicles.
+
+    A live entry with date-effective settings (``period_overrides``) is frozen as
+    it applies on ``when``, the fixture frame's date: the frozen entry carries no
+    overrides, and its pipeline is the one that frame is segmented with.
     """
+    if live_vehicle.get("period_overrides"):
+        from report_generator.configs import effective_vehicle_config
+
+        live_vehicle = effective_vehicle_config(live_vehicle, when)
     is_diesel = str(live_vehicle.get("fuel_type", "")).upper() == "DIESEL"
     if is_diesel != (kind == "diesel"):
         raise ValueError(
@@ -434,11 +450,19 @@ def _live_configs() -> tuple[dict, dict]:
 
 
 def plan_frozen_config(
-    alias: str, source_reg: str, kind: str, *, force: bool
+    alias: str,
+    source_reg: str,
+    kind: str,
+    *,
+    force: bool,
+    frame: pd.DataFrame | None = None,
 ) -> tuple[dict, tuple[str, dict] | None, str]:
     """Check and build the alias's frozen config, writing nothing yet.
 
-    Returns ``(entry, pipeline or None, the live pipeline name)``.
+    ``frame`` is the fixture's data: an EV entry with date-effective settings is
+    frozen as it applies on the frame's date — the date the generator would
+    resolve the leg for. Returns ``(entry, pipeline or None, the live pipeline
+    name)``.
     """
     live_vehicles, live_pipelines = _live_configs()
     if source_reg not in live_vehicles:
@@ -447,8 +471,13 @@ def plan_frozen_config(
         raise ValueError(f"{alias} is a live registration; an alias must not be one")
     if alias in _load_json(FROZEN_VEHICLES) and not force:
         raise ValueError(f"{alias} already has a frozen config (use --force)")
+    when = None
+    if kind == "ev" and frame is not None:
+        from report_generator.segmentation.timeutil import frame_utc_date
+
+        when = frame_utc_date(frame)
     entry, pipeline = frozen_entry(
-        live_vehicles[source_reg], live_pipelines, alias, kind
+        live_vehicles[source_reg], live_pipelines, alias, kind, when=when
     )
     if (
         pipeline is not None
@@ -535,7 +564,11 @@ def main(argv: list[str] | None = None) -> int:
         planned = None
         if args.config_from:
             planned = plan_frozen_config(
-                alias, args.config_from.upper(), kind, force=args.force
+                alias,
+                args.config_from.upper(),
+                kind,
+                force=args.force,
+                frame=clean,
             )
     except ValueError as exc:
         raise SystemExit(f"make_fixture: {exc}") from None

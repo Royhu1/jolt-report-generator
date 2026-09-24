@@ -14,6 +14,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from ..configs import effective_vehicle_config
 from ..ep_confidence import attach_ep_audits
 from .constants import (
     AC_COL,
@@ -45,6 +46,7 @@ from .speed_detection import (
     find_discharge_segments_by_speed,
     find_speed_trips,
 )
+from .timeutil import _to_utc, frame_utc_date
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,15 @@ def run_segment_detection(
     column-name mapping and the SOC-estimate fallback both use the vehicle's
     correct configuration.
 
+    A vehicle with date-effective settings (``period_overrides``) is resolved for
+    the leg's date — the UTC date of the first valid timestamp of ``df_raw`` — so
+    every caller handing this function the same frame (the generator, an
+    external renderer) segments it with the same settings, and none has to
+    resolve anything itself. A pipeline with ``reconcile_charge_boundaries``
+    has each charge that overlaps a trip clamped to the trip's boundary
+    (:func:`_reconcile_charge_boundaries`) before the diagnostics and the
+    painter see the segments.
+
     Parameters
     ----------
     df_raw   : raw telemetry DataFrame (single leg)
@@ -108,7 +119,8 @@ def run_segment_detection(
                        When provided AND ``generate_validation_fig`` is True AND
                        ``out_dir`` is not None, it is invoked EXACTLY where the old
                        ``plot_leg_validation`` call sat (after split / merge /
-                       ``_recompute_anchors`` / ``_enforce_anchor_ordering``), with
+                       ``_recompute_anchors`` / ``_enforce_anchor_ordering`` and
+                       the opt-in charge/trip boundary reconciliation), with
                        the SAME argument names and values ``plot_leg_validation``
                        received:
 
@@ -146,6 +158,12 @@ def run_segment_detection(
     saving to CSV (see _ANCHOR_PRIVATE_KEYS).
     """
     cfg = VEHICLE_CONFIG.get(reg, {})
+    # Date-effective settings: resolved for this leg's date, taken from the frame
+    # itself. A vehicle without the field is read as it is, at no extra cost.
+    leg_day = None
+    if cfg.get("period_overrides"):
+        leg_day = frame_utc_date(df_raw)
+        cfg = effective_vehicle_config(cfg, leg_day)
     _ac_col = cfg.get("ac_col", AC_COL)
     _dc_col = cfg.get("dc_col", DC_COL)
     _tot_col = cfg.get("total_energy_col", TOTAL_ENERGY_COL)
@@ -418,6 +436,23 @@ def run_segment_detection(
             suffix,
         )
 
+    # ── Charge / trip boundary reconciliation (opt-in, per pipeline) ────────
+    # On the final segments, before the diagnostics and the painter see them, so
+    # every caller — the generator, an external renderer — gets the same
+    # reconciled charges. Only a pipeline that sets the key does this.
+    if _pipeline_cfg.get("reconcile_charge_boundaries") is True:
+        _n_charge_clamps = _reconcile_charge_boundaries(
+            charge_segs, discharge_segs, reg, suffix
+        )
+        if _n_charge_clamps:
+            logger.info(
+                "  charge/trip boundary reconciliation: %d charge boundaries "
+                "clamped to a trip (%s %s)",
+                _n_charge_clamps,
+                reg,
+                suffix,
+            )
+
     # ── EP-confidence diagnostics ──────────────────────────────────────────
     # Measure (never modify) each final discharge segment's energy / distance
     # attribution quality and attach it as the public ``ep_audit`` key, which the
@@ -478,7 +513,7 @@ def run_segment_detection(
         out_path = val_dir / f"validation_{reg}_{suffix}.png"
         _mass_col = cfg.get("mass_col", MASS_COL)
         _speed_col = cfg.get("speed_col", "wheel_based_speed")
-        _mass_agg = resolve_mass_agg(reg, _pipeline_cfg)
+        _mass_agg = resolve_mass_agg(reg, _pipeline_cfg, when=leg_day)
         figure_hook(
             df_raw,
             charge_segs,
@@ -500,3 +535,80 @@ def run_segment_detection(
         )
 
     return charge_segs, discharge_segs
+
+
+# =============================================================================
+# Charge / trip boundary reconciliation (opt-in post-pass)
+# =============================================================================
+def _reconcile_charge_boundaries(
+    charge_segs: list[dict], discharge_segs: list[dict], reg: str, suffix: str
+) -> int:
+    """Clamp each charge's boundaries to the trips that overlap it, in place.
+
+    On a sparse telematics feed a charge found on the SOC ends at the first
+    sample after the charging — which can be taken once the vehicle has already
+    set off, after the start of a trip that a higher-rate signal (the Logger
+    speed) detected; a charge can likewise start before a trip has ended. The
+    trip's boundary is the better observation, so the charge gives way: a trip
+    that starts inside a charge moves the charge's end to the trip's start, and
+    a trip that ends inside a charge moves the charge's start to the trip's end.
+    Only the time axis changes: the charge's SOC values, energy, energy source
+    and energy anchors (the counter samples its energy was measured between) are
+    left as they are. The new time keeps the charge's own time-zone form.
+
+    A charge is left whole, with a warning, when the overlap is not a boundary
+    error — a trip lies wholly inside the charge, or the charge wholly inside a
+    trip — or when the clamps would leave it no duration. Touching boundaries
+    (a trip starting exactly at a charge's end) are not an overlap.
+
+    Returns the number of charge boundaries moved.
+    """
+    clamped = 0
+    for charge in charge_segs:
+        c_start = _to_utc(charge["start_time"])
+        c_end = _to_utc(charge["end_time"])
+        new_start, new_end = c_start, c_end
+        problem = None
+        for trip in discharge_segs:
+            t_start = _to_utc(trip["start_time"])
+            t_end = _to_utc(trip["end_time"])
+            if t_end <= c_start or t_start >= c_end:
+                continue  # no overlap
+            starts_inside = c_start < t_start < c_end
+            ends_inside = c_start < t_end < c_end
+            if starts_inside and ends_inside:
+                problem = f"the trip {t_start} - {t_end} lies wholly inside it"
+            elif starts_inside:
+                new_end = min(new_end, t_start)
+            elif ends_inside:
+                new_start = max(new_start, t_end)
+            else:
+                problem = f"it lies wholly inside the trip {t_start} - {t_end}"
+            if problem is not None:
+                break
+        if problem is None and new_start >= new_end:
+            problem = f"clamping it to {new_start} - {new_end} would leave no duration"
+        if problem is not None:
+            logger.warning(
+                "  charge %s - %s overlaps a trip and is left unchanged (%s %s): %s",
+                c_start,
+                c_end,
+                reg,
+                suffix,
+                problem,
+            )
+            continue
+        if new_start != c_start:
+            charge["start_time"] = _in_form_of(new_start, charge["start_time"])
+            clamped += 1
+        if new_end != c_end:
+            charge["end_time"] = _in_form_of(new_end, charge["end_time"])
+            clamped += 1
+    return clamped
+
+
+def _in_form_of(instant: pd.Timestamp, reference) -> pd.Timestamp:
+    """``instant`` (UTC) as ``reference`` writes its times: aware, or naive UTC."""
+    if pd.Timestamp(reference).tzinfo is None:
+        return instant.tz_convert(None)
+    return instant

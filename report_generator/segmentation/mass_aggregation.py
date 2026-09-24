@@ -6,11 +6,13 @@ Behaviour-preserving split of the former ``segment_algorithms.py``.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 import numpy as np
 import pandas as pd
 
+from ..configs import effective_vehicle_config
 from .constants import PIPELINE_CONFIGS, VEHICLE_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -276,15 +278,25 @@ def _agg_mass(
     return round(value, 1), round(cv, 4)
 
 
-def resolve_mass_agg(reg: str, pipeline_cfg: dict | None = None) -> str:
+def resolve_mass_agg(
+    reg: str, pipeline_cfg: dict | None = None, *, when: dt.date | None = None
+) -> str:
     """Resolve the ``mass_agg`` method for ``reg``.
 
     Precedence: vehicle-level (``vehicles.json``) > pipeline-level
     (``pipelines.json``) > default ``"mean"``. When ``pipeline_cfg`` is not
     supplied it is derived from the vehicle's configured pipeline, so a bare
     ``resolve_mass_agg(reg)`` still honours a pipeline-level setting.
+
+    ``when`` is the leg's date (see
+    :func:`report_generator.configs.effective_vehicle_config`): for a vehicle with
+    ``period_overrides`` the vehicle's settings are resolved for it first, so a
+    period that sets ``mass_agg`` or ``pipeline`` is honoured. Without it the
+    vehicle's base entry is used.
     """
     veh = VEHICLE_CONFIG.get(reg, {})
+    if when is not None and veh.get("period_overrides"):
+        veh = effective_vehicle_config(veh, when)
     m = veh.get("mass_agg")
     if m:
         return str(m)

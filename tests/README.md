@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~60 s, 1187 tests, fully offline
+pytest                       # ~60 s, 1316 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -40,8 +40,8 @@ The five contract files directly under `tests/` predate this suite.
 | Area | Tests |
 |------|-------|
 | Existing contract suite (`tests/*.py`) | 254 |
-| `unit/` | 637 |
-| `integration/` | 296 |
+| `unit/` | 737 |
+| `integration/` | 325 |
 
 ## The offline guarantee
 
