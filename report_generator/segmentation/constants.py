@@ -24,6 +24,9 @@ MOVING_COL = "electric_energy_wheelbased_speed_over_zero"
 TOTAL_ENERGY_COL = "total_electric_energy_used_plugged_in_included"
 MASS_COL = "gross_combination_vehicle_weight"
 RECUP_COL = "electric_energy_recuperation_watthours"
+# What made the feed send a row: "TIMER" for the periodic readings, an event name
+# (ignition, charging status, …) otherwise. Not every feed carries it.
+TRIGGER_TYPE_COL = "trigger_type"
 
 # ── Mass-clustering default parameters ──────────────────────────────────────────
 MIN_CLUSTER_GAP_KG = 2000.0  # Minimum mass gap between clusters (kg): merge two clusters when their means differ by less than this

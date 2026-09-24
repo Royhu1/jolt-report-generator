@@ -13,8 +13,9 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_float_dtype, is_object_dtype
 
-from ..configs import effective_vehicle_config
+from ..configs import _is_positive_number, effective_vehicle_config
 from ..ep_confidence import attach_ep_audits
 from .constants import (
     AC_COL,
@@ -28,6 +29,7 @@ from .constants import (
     SOC_COL,
     TIME_COL,
     TOTAL_ENERGY_COL,
+    TRIGGER_TYPE_COL,
     VEHICLE_CONFIG,
 )
 from .mass_aggregation import resolve_mass_agg
@@ -49,6 +51,14 @@ from .speed_detection import (
 from .timeutil import _to_utc, frame_utc_date
 
 logger = logging.getLogger(__name__)
+
+#: The ``trigger_type`` of a feed's periodic readings; every other value names
+#: an event that made the feed send an extra row.
+_TIMER_TRIGGER = "TIMER"
+
+#: Registrations already told, in this process, that their pipeline's event-row
+#: SOC filter cannot act because the feed has no ``trigger_type`` column.
+_NO_TRIGGER_TYPE_LOGGED: set[str] = set()
 
 
 # =============================================================================
@@ -89,6 +99,12 @@ def run_segment_detection(
     (:func:`_reconcile_charge_boundaries`) before the diagnostics and the
     painter see the segments.
 
+    A pipeline with ``soc_event_spike_pct`` has the SOC of event rows that
+    stand out above the periodic readings blanked
+    (:func:`_blank_event_soc_spikes`) before any detector reads it, so the
+    charges, the trips, their diagnostics and the painter all work on the same
+    cleaned frame; the caller's ``df_raw`` is never modified.
+
     Parameters
     ----------
     df_raw   : raw telemetry DataFrame (single leg)
@@ -126,7 +142,8 @@ def run_segment_detection(
 
                            figure_hook(
                                df_raw,               # positional: augmented df,
-                                                     #   incl. mass_cluster / mass_moving
+                                                     #   incl. mass_cluster / mass_moving,
+                                                     #   event-row SOC filter applied
                                charge_segs,          # positional
                                discharge_segs,       # positional
                                reg,                  # positional
@@ -216,6 +233,16 @@ def run_segment_detection(
     # To add an algorithm branch: add an elif branch == '...' here and implement
     # the corresponding function.
     branch = _pipeline_cfg.get("branch", "soc")
+
+    # ── Event-row SOC spikes (opt-in, per pipeline) ─────────────────────────
+    # Before any detector reads the SOC, so the charges, the trips, their
+    # diagnostics and the painter all see the same cleaned signal. A copy is
+    # cleaned; the caller's frame is left as it is.
+    _spike_pct = _pipeline_cfg.get("soc_event_spike_pct")
+    if _spike_pct is not None:
+        df_raw = _filter_event_soc_spikes(
+            df_raw, _spike_pct, _pipeline_name, reg, suffix
+        )
 
     if branch == "soc":
         charge_segs = find_charge_segments_by_soc(df_raw, **c_params)
@@ -612,3 +639,116 @@ def _in_form_of(instant: pd.Timestamp, reference) -> pd.Timestamp:
     if pd.Timestamp(reference).tzinfo is None:
         return instant.tz_convert(None)
     return instant
+
+
+# =============================================================================
+# Event-row SOC spikes (opt-in pre-pass)
+# =============================================================================
+def _filter_event_soc_spikes(
+    df_raw: pd.DataFrame, spike_pct, pipeline_name: str, reg: str, suffix: str
+) -> pd.DataFrame:
+    """Apply a pipeline's ``soc_event_spike_pct`` to one leg's frame.
+
+    Returns the frame the detectors should read: a cleaned copy when readings are
+    blanked, else ``df_raw`` itself. A frame without a ``trigger_type`` column
+    cannot be filtered and passes unchanged, which is logged once per vehicle.
+    A threshold that is not a positive number is a configuration error: the
+    loader refuses one in ``pipelines.json``, and one supplied any other way is
+    refused here.
+    """
+    if not _is_positive_number(spike_pct):
+        raise ValueError(
+            f"pipeline {pipeline_name!r}: soc_event_spike_pct must be a positive "
+            f"number of SOC percentage points, not {spike_pct!r}"
+        )
+    if TRIGGER_TYPE_COL not in df_raw.columns:
+        if reg not in _NO_TRIGGER_TYPE_LOGGED:
+            _NO_TRIGGER_TYPE_LOGGED.add(reg)
+            logger.info(
+                "  event-row SOC filter: pipeline %r sets soc_event_spike_pct, but "
+                "the telematics of %s carry no %s column, so no reading can be "
+                "judged; the filter does nothing for this vehicle",
+                pipeline_name,
+                reg,
+                TRIGGER_TYPE_COL,
+            )
+        return df_raw
+    cleaned, n_blanked = _blank_event_soc_spikes(df_raw, float(spike_pct))
+    if n_blanked:
+        logger.info(
+            "  event-row SOC filter: %d event-row SOC readings above both "
+            "neighbouring periodic readings by >= %s points blanked (%s %s)",
+            n_blanked,
+            spike_pct,
+            reg,
+            suffix,
+        )
+    return cleaned
+
+
+def _blank_event_soc_spikes(
+    df_raw: pd.DataFrame, spike_pct: float
+) -> tuple[pd.DataFrame, int]:
+    """Blank the SOC of event rows that stand out above the periodic readings.
+
+    Some telematics feeds send a periodic row (``trigger_type`` ``"TIMER"``) and,
+    in between, a row for each event (ignition on, a change of charging status,
+    …). On such a feed the event rows can carry a stale or not-yet-settled SOC:
+    typically, after the vehicle has stood with the ignition off, the periodic
+    rows have no SOC for a while and the ignition-on row then reports a value a
+    few points above the SOC before it and after it. Read as a rise and a fall,
+    that excursion becomes a phantom charge.
+
+    An event row's SOC is set to NaN when it exceeds **both** the nearest
+    preceding and the nearest following valid periodic SOC — valid meaning a
+    number other than zero, which the detectors read as missing — by at least
+    ``spike_pct`` points. A genuine change of charge persists into the next
+    periodic reading, so a rise carried by event rows during a charge is kept,
+    and so is an event row whose excursion is below the threshold on either
+    side. Periodic rows are the reference and are never changed; neither is an
+    event row without a valid periodic reading on both sides (at a leg's ends),
+    one below its neighbours, or one without a parseable timestamp. The
+    neighbours are found in time order, whatever the frame's row order. A row
+    with no ``trigger_type`` counts as an event row.
+
+    Returns ``(frame, n_blanked)``. ``frame`` is a copy with those SOC cells set
+    to NaN, or ``df_raw`` itself — never modified — when nothing is blanked or
+    the frame lacks the time, SOC or ``trigger_type`` column.
+    """
+    if any(col not in df_raw.columns for col in (TIME_COL, SOC_COL, TRIGGER_TYPE_COL)):
+        return df_raw, 0
+    soc = pd.to_numeric(df_raw[SOC_COL], errors="coerce")
+    rows = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                df_raw[TIME_COL], errors="coerce", utc=True
+            ).reset_index(drop=True),
+            "soc": soc.where(soc != 0).reset_index(drop=True),
+            "periodic": (
+                df_raw[TRIGGER_TYPE_COL].astype(str).str.strip().str.upper()
+                == _TIMER_TRIGGER
+            ).reset_index(drop=True),
+        }
+    )
+    # Positional labels throughout, so the result maps back onto any index.
+    rows = rows[rows["time"].notna()].sort_values("time", kind="mergesort")
+    periodic_soc = rows["soc"].where(rows["periodic"])
+    before = periodic_soc.ffill()
+    after = periodic_soc.bfill()
+    spike = (
+        ~rows["periodic"]
+        & (rows["soc"] - before >= spike_pct)
+        & (rows["soc"] - after >= spike_pct)
+    )
+    positions = rows.index[spike.to_numpy()].to_numpy()
+    if len(positions) == 0:
+        return df_raw, 0
+    cleaned = df_raw.copy()
+    column = cleaned[SOC_COL]
+    if is_float_dtype(column) or is_object_dtype(column):
+        column = column.copy()
+    else:
+        column = column.astype(object)
+    column.iloc[positions] = np.nan
+    cleaned[SOC_COL] = column
+    return cleaned, int(len(positions))
