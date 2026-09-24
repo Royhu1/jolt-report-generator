@@ -322,6 +322,7 @@
     "trip_endpoint_anchor": "zero_speed",
     "max_extend_minutes": 15.0,
     "mass_agg": "iqr_median",
+    "soc_event_spike_pct": 3.0,
     "charge_params": {
       "plateau_window_min": 60,
       "min_soc_rise": 5.0,
@@ -338,7 +339,8 @@
       "min_stop_duration_min": 5.0,
       "min_trip_duration_min": 2.0,
       "min_soc_drop": 1.0,
-      "min_energy_kwh": 1.0
+      "min_energy_kwh": 1.0,
+      "keep_trips_outside_cap_band": true
     }
   },
   "mercedes_soc": {
