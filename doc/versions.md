@@ -964,3 +964,80 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   structure test.
 
   Full suite: **1412 passed, 4 skipped** (3.7.0: 1312 passed, 4 skipped).
+
+## 3.8.1 — odometer readings out of the counter's sequence no longer anchor a distance
+
+- **Report output: changes for legs whose distance was anchored on a replayed (or zero)
+  odometer reading; nothing else changes.** Data namespace: the package default
+  (`DATA_NAMESPACE`) stays `3.3.0/`; whether reports written by an earlier release are
+  regenerated is the deployer's decision. Evidence:
+  - every registered fixture's segmentation regenerates its golden byte for byte (no
+    fixture reading is out of sequence);
+  - a replay of the segmentation over 7941 persisted raw telematics legs of the 16
+    configured EV vehicles (without Logger frames) under 3.8.0 and 3.8.1 is identical in
+    7900 legs; in the other 41 only odometer anchors and the EP diagnostics' distance
+    window differ — no segment is added or removed, and no EP grade changes except where
+    a distance does. The filter ignores 1104 readings in 151 legs: 934 zeros and 170 out
+    of sequence;
+  - recomputed row by row against every EV report written from those legs (each of the
+    404 rows on an affected leg first reproducing its reported distance exactly under
+    3.8.0's anchoring), 24 rows in 7 reports of 5 vehicles change their `Distance (km)`.
+    **14 trips**: one from 73.600 to 49.245 km, the case below; one gains 102.715 km
+    where an end anchor 106 km behind left it blank; 12 move by +0.055 to +0.200 km
+    (+1.48 km in all) where a reading a few hundred metres out of sequence was an
+    anchor. **10 charge rows**: one loses the 9807.9 km a zero reading gave it; on one
+    day of a feed that interleaves a second odometer stream, three lose 74.9, 71.7 and
+    38.2 km of the 74.9, 73.9 and 70.3 km that stream gave them and three gain 31.0,
+    0.4 and 0.7 km; three move by 0.2 km to or from a blank. On the changed trips the
+    cells computed from the distance follow — average speed, the EP columns,
+    `EP_exclude_aux`, the EP-confidence grade (the trip below goes from `caution`,
+    `DIST_WINDOW=0.15`, to `good`) — as does the cumulative distance of the rows after
+    them in the same report. Charge rows feed neither EP nor the cumulative distance,
+    and no leg type changes. Diesel reports are unaffected: their distance is the
+    Logger's cumulative distance.
+- **Why.** A segment's distance is the difference between the valid odometer readings
+  nearest before its start and nearest after its end. On a thinned telematics feed, the
+  row sent at 05:41:20, as the vehicle woke up, carried 36131.13 km — the value of a stop
+  an hour earlier, 24.355 km behind the readings on either side of it (36155.485 at
+  05:09:01, 36155.51 at 05:43:44, 2 min 24 s later). A trip found on the 1 Hz Logger
+  speed from 05:42:27 took it as its start and reported 73.60 km; the Logger's own
+  cumulative distance, the wheel-speed integral and the GPS track give 49.24, 49.3 and
+  48.5 km. The same feed sends earlier values again elsewhere, one or several times in a
+  row, some feeds send `0` for a missing odometer, and one interleaves a second stream
+  whose odometer runs up to 75 km ahead of the vehicle's.
+- **The rule** (`segmentation.detection._blank_replayed_odometer`, a pre-pass of
+  `run_segment_detection` on every leg, before any detector takes an anchor). Over the
+  readings that have a timestamp, in time order, it sets to NaN: every reading of zero or
+  less; a run of one repeated value lying more than 0.05 km below the last reading kept
+  before it, where the reading after the run follows that last reading again (the
+  counter went back and returned); and a run lying further ahead of the last reading
+  kept than 130 km/h could have taken it, where the reading after the run is lower than
+  the run and follows that last reading again. One reading follows another when the step
+  between them is at most 0.05 km backwards (the odometer counts in 5 m and the feed
+  rounds) and at most what 130 km/h covers, plus 0.05 km, forwards. A drop the counter
+  does not return from is a reset and is kept with everything after it, as before.
+- **Scope.** The trips and charges of both branches, the mass split, the EP-confidence
+  diagnostics and the painter (`figure_hook`'s `df_raw`) all read the cleaned copy, so
+  an external renderer re-driving `run_segment_detection` gets the same result; the
+  caller's frame, and so the raw telematics the generator persists, keep the odometer as
+  the feed sent it. The number of readings ignored is logged per leg. A leg whose
+  readings all follow one another — nearly every leg — is passed on as it is.
+- **Not covered.** The first and the last run of a leg are kept whatever their value:
+  with nothing on one side, a value sent again cannot be told from a reset — a feed that
+  sends a stale value while the vehicle is parked overnight can still leave it at the end
+  of one leg and the start of the next. A replayed block of several different earlier
+  values would not be recognised either; none was found in the data.
+- **Test suite.** New: 37 unit tests (the replay between current readings, a value sent
+  again several times, one the counter returns from slowly, zero and negative readings
+  wherever they are, a run ahead of the counter, a reset kept with what follows, a reset
+  to near zero, the tolerance and the speed limit at their edges, a jump the counter
+  stays at, the first and the last run, time order over row order, rows without a
+  timestamp, any index, the caller's frame, the column's type, the log; and through
+  `run_segment_detection`: a trip leaving from the wake-up row on the telematics speed
+  and on the Logger speed, with the row's `Distance (km)`, the EP diagnostics' distance
+  window, a charge starting on the wake-up row, the SOC branch and its minimum-distance
+  filter, the caller's frame and the painter's) and 2 fixture-driven integration tests (a
+  value sent again on a real wake-up row: the trip starts at the reading before it and
+  every other segment stays as its golden).
+
+  Full suite: **1451 passed, 4 skipped** (3.8.0: 1412 passed, 4 skipped).
