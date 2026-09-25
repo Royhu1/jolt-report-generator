@@ -533,6 +533,8 @@ entry point; parameters come from `PIPELINE_CONFIGS[pipeline]`:
 
 ```
 run_segment_detection
+  ├─ _blank_replayed_odometer (pre-pass, every leg: blank the odometer readings that
+  │                            cannot be the counter's own — a zero, a value sent again)
   ├─ _blank_event_soc_spikes (opt-in pre-pass, soc_event_spike_pct: blank the SOC of
   │                           event rows standing out above the periodic readings)
   ├─ branch=="soc":   find_charge_segments_by_soc + find_discharge_segments_by_soc
@@ -548,6 +550,29 @@ run_segment_detection
                                final anchors → the public ``ep_audit`` key; read-only)
 ```
 
+- **Replayed odometer readings (pre-pass, every leg)**: a segment's distance is the
+  difference between the valid odometer readings nearest before its start and nearest
+  after its end. Some feeds send, between the vehicle's current readings, an earlier
+  odometer value again — typically on the row the unit sends as the vehicle wakes up,
+  just before it sets off — and a trip leaving from there took the old value as its
+  start, so its distance included everything driven since that earlier reading. Other
+  feeds interleave a second stream whose odometer runs ahead of the vehicle's, and some
+  send `0` for a missing value. Before any detector reads the odometer, the pass sets to
+  NaN, over the readings that have a timestamp and in time order: every reading of zero
+  or less; a run of one repeated value lying more than 0.05 km below the last reading
+  kept before it, where the reading after the run follows that last reading again (the
+  counter went back and returned); and a run lying further ahead of the last reading
+  kept than 130 km/h could have taken it, where the reading after the run is lower than
+  the run and follows that last reading again. One reading follows another when the
+  step between them is at most 0.05 km backwards and at most what 130 km/h covers (plus
+  0.05 km) forwards. A drop the counter does not return from is a reset of the counter
+  and is kept, with everything after it; the first and the last run of a leg are kept
+  whatever their value, having nothing on one side to judge them by. A leg whose
+  readings all follow one another — nearly every leg — is passed on as it is. The trips
+  and charges of both branches, the mass split, the EP-confidence diagnostics and the
+  painter all read the cleaned copy; the caller's frame, and so the persisted raw
+  telematics, keep the odometer as the feed sent it. The number of readings ignored is
+  logged per leg.
 - **Event-row SOC spikes (opt-in pre-pass, `soc_event_spike_pct`)**: some feeds send a
   periodic row (`trigger_type` `TIMER`) and, in between, a row per event — ignition on, a
   change of charging status. On such a feed an event row can carry a stale SOC:

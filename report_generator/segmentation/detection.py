@@ -100,7 +100,11 @@ def run_segment_detection(
     (:func:`_reconcile_charge_boundaries`) before the diagnostics and the
     painter see the segments.
 
-    A pipeline with ``soc_event_spike_pct`` has the SOC of event rows that
+    Every leg has the odometer readings that cannot belong to the counter's
+    progression — a zero, or an earlier value sent again between readings that
+    agree with each other (:func:`_blank_replayed_odometer`) — blanked before
+    any detector chooses a distance anchor. A pipeline with
+    ``soc_event_spike_pct`` has the SOC of event rows that
     stand out above the periodic readings blanked
     (:func:`_blank_event_soc_spikes`) before any detector reads it, so the
     charges, the trips, their diagnostics and the painter all work on the same
@@ -237,6 +241,12 @@ def run_segment_detection(
     # To add an algorithm branch: add an elif branch == '...' here and implement
     # the corresponding function.
     branch = _pipeline_cfg.get("branch", "soc")
+
+    # ── Replayed odometer readings (every leg) ──────────────────────────────
+    # Before any detector takes a distance anchor, so the trips, the charges,
+    # the mass split, the EP diagnostics and the painter all read the same
+    # odometer. A copy is cleaned; the caller's frame is left as it is.
+    df_raw = _filter_replayed_odometer(df_raw, reg, suffix)
 
     # ── Event-row SOC spikes (opt-in, per pipeline) ─────────────────────────
     # Before any detector reads the SOC, so the charges, the trips, their
@@ -662,6 +672,161 @@ def _in_form_of(instant: pd.Timestamp, reference) -> pd.Timestamp:
     if pd.Timestamp(reference).tzinfo is None:
         return instant.tz_convert(None)
     return instant
+
+
+# =============================================================================
+# Replayed odometer readings (pre-pass, every leg)
+# =============================================================================
+#: The fastest a vehicle is taken to cover distance between two odometer
+#: readings (km/h): a lorry's road speed, with margin for a timestamp that lags
+#: its reading by a few seconds.
+_ODOMETER_MAX_SPEED_KMH = 130.0
+
+#: A step against the counter's progression up to this size (km) is resolution,
+#: not a wrong reading: the odometer counts in 5 m and the feed rounds.
+_ODOMETER_TOLERANCE_KM = 0.05
+
+_KM_PER_NS_AT_MAX_SPEED = _ODOMETER_MAX_SPEED_KMH / 3.6e12
+
+
+def _filter_replayed_odometer(
+    df_raw: pd.DataFrame, reg: str, suffix: str
+) -> pd.DataFrame:
+    """Blank one leg's odometer readings that cannot be the counter's own.
+
+    Returns the frame the detectors should read: a cleaned copy when readings
+    are blanked, else ``df_raw`` itself. The number blanked is logged per leg.
+    """
+    cleaned, n_blanked = _blank_replayed_odometer(df_raw)
+    if n_blanked:
+        logger.info(
+            "  odometer: %d readings ignored — a zero, or a value out of the "
+            "counter's sequence (%s %s)",
+            n_blanked,
+            reg,
+            suffix,
+        )
+    return cleaned
+
+
+def _blank_replayed_odometer(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Blank the odometer readings a leg's distance must not be anchored on.
+
+    A trip's or charge's distance is the difference between the valid odometer
+    readings nearest before its start and nearest after its end. Some feeds
+    send, between the vehicle's current readings, an earlier value again — the
+    value of a stop an hour before, typically on a row the unit sends after
+    waking up — and a trip starting just after such a row takes the old value as
+    its start: its distance then includes everything driven since that earlier
+    reading. Others interleave a second stream whose odometer runs ahead of the
+    vehicle's. A zero is the feed's placeholder for a missing value.
+
+    Blanked (set to NaN), judged in time order over the readings that have a
+    timestamp:
+
+    - every reading of zero or less;
+    - a run of one repeated value that lies more than
+      :data:`_ODOMETER_TOLERANCE_KM` below the last reading kept before it,
+      where the reading after the run follows that last reading again — the
+      counter went back and returned, so the run is an earlier value sent again;
+    - a run that lies further ahead of the last reading kept than
+      :data:`_ODOMETER_MAX_SPEED_KMH` could have taken it, where the reading
+      after the run is lower than the run and follows that last reading again.
+
+    One reading follows another when the step between them is no more than the
+    tolerance backwards, and no more than the maximum speed (plus the tolerance)
+    could cover forwards. A drop the counter does not return from is a reset of
+    the counter, not a wrong reading, and is kept, as is everything after it. The
+    first and the last run of a leg are kept whatever their value: there is
+    nothing on one side to judge them against. A frame whose readings all
+    follow one another is returned as it is, which is nearly every leg.
+
+    Returns ``(frame, n_blanked)``. ``frame`` is a copy with those odometer cells
+    set to NaN, or ``df_raw`` itself — never modified — when nothing is blanked or
+    the frame lacks the time or odometer column.
+    """
+    if TIME_COL not in df_raw.columns or ODO_COL not in df_raw.columns:
+        return df_raw, 0
+    rows = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                df_raw[TIME_COL], errors="coerce", utc=True
+            ).reset_index(drop=True),
+            "km": pd.to_numeric(df_raw[ODO_COL], errors="coerce").reset_index(
+                drop=True
+            ),
+        }
+    )
+    # Positional labels throughout, so the result maps back onto any index.
+    rows = rows[rows["time"].notna() & rows["km"].notna()]
+    placeholder = (rows["km"] <= 0).to_numpy()
+    readings = rows[~placeholder].sort_values("time", kind="mergesort")
+    out_of_sequence = _out_of_sequence_readings(
+        pd.DatetimeIndex(readings["time"]).as_unit("ns").asi8,
+        readings["km"].to_numpy(dtype=float),
+    )
+    positions = np.sort(
+        np.concatenate(
+            [
+                rows.index[placeholder].to_numpy(),
+                readings.index[out_of_sequence].to_numpy(),
+            ]
+        )
+    )
+    if len(positions) == 0:
+        return df_raw, 0
+    cleaned = df_raw.copy()
+    column = cleaned[ODO_COL]
+    if is_float_dtype(column) or is_object_dtype(column):
+        column = column.copy()
+    else:
+        column = column.astype(object)
+    column.iloc[positions] = np.nan
+    cleaned[ODO_COL] = column
+    return cleaned, int(len(positions))
+
+
+def _out_of_sequence_readings(times_ns: np.ndarray, km: np.ndarray) -> np.ndarray:
+    """Which of a leg's time-ordered, positive odometer readings to ignore.
+
+    The rule of :func:`_blank_replayed_odometer`, on bare arrays: ``times_ns``
+    (UTC nanoseconds, ascending) and ``km`` (the readings). Returns a boolean
+    mask over the readings.
+    """
+    n = len(km)
+    ignore = np.zeros(n, dtype=bool)
+    if n < 3:
+        return ignore
+    tol = _ODOMETER_TOLERANCE_KM
+    steps = np.diff(km)
+    reach = _KM_PER_NS_AT_MAX_SPEED * np.diff(times_ns) + tol
+    if np.all((steps >= -tol) & (steps <= reach)):
+        return ignore
+
+    def follows(a: int, b: int) -> bool:
+        step = km[b] - km[a]
+        return (
+            -tol <= step <= _KM_PER_NS_AT_MAX_SPEED * (times_ns[b] - times_ns[a]) + tol
+        )
+
+    # A value sent again is often sent several times in a row: judge each run
+    # of one repeated value as a whole.
+    starts = np.flatnonzero(np.concatenate([[True], km[1:] != km[:-1]]))
+    ends = np.append(starts[1:] - 1, n - 1)
+    kept = ends[0]
+    for first, last, after in zip(starts[1:-1], ends[1:-1], starts[2:]):
+        if follows(kept, after):
+            behind = km[first] < km[kept] - tol
+            ahead = (
+                km[first] - km[kept]
+                > _KM_PER_NS_AT_MAX_SPEED * (times_ns[first] - times_ns[kept]) + tol
+                and km[after] < km[last] - tol
+            )
+            if behind or ahead:
+                ignore[first : last + 1] = True
+                continue
+        kept = last
+    return ignore
 
 
 # =============================================================================
