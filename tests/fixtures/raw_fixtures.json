@@ -14,5 +14,9 @@
   "DSL01": {
     "path": "raw/DSL01/logger_2025-10-07_0000.csv",
     "kind": "diesel"
+  },
+  "EVSPD02": {
+    "path": "raw/EVSPD02/raw_2025-11-25_0042.csv",
+    "kind": "ev"
   }
 }
