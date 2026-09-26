@@ -30,7 +30,7 @@ from report_generator.charts import (
     empty_chart_note,
     empty_note_extent,
 )
-from report_generator.columns import HEADERS, _is_nan
+from report_generator.columns import DISTANCE_ONLY_SOURCE, HEADERS, _is_nan
 
 logger = logging.getLogger(__name__)
 
@@ -392,9 +392,21 @@ def _write_graphs_sheet(workbook, rows: list[tuple], headers: tuple) -> None:
         graphs_ws.insert_chart(f"A{gi * chart_row_step() + 1}", chart)
 
 
-def _write_definitions_sheet(workbook, headers: tuple) -> None:
+def _has_distance_only_rows(rows, headers: tuple) -> bool:
+    """Whether any row is a distance-only trip (by its ``Energy Source``)."""
+    if "Energy Source" not in headers:
+        return False
+    i_src = headers.index("Energy Source") - 1  # rows omit 'Leg Number'
+    return any(
+        len(row) > i_src and row[i_src] == DISTANCE_ONLY_SOURCE for row in rows or ()
+    )
+
+
+def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     """Add the ``Definitions`` worksheet (EV or diesel field glossary).
-    Verbatim block from ``_write_excel_report``."""
+
+    A report holding a distance-only trip (among ``rows``) also explains that
+    energy source; every other report's glossary is the fixed text below."""
     # ── Definitions worksheet ─────────────────────────────────────────────
     defs_ws = workbook.add_worksheet("Definitions")
     def_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
@@ -467,6 +479,17 @@ def _write_definitions_sheet(workbook, headers: tuple) -> None:
             + "EP_RANGE = the EP value itself, outside the plausible band for a 40 t battery "
             + "HGV — the backstop for a cause not modelled by the checks above.",
         ]
+        if _has_distance_only_rows(rows, headers):
+            def_texts.append(
+                'Energy Source: "distance_only" = a trip the speed signal found and the '
+                + "odometer confirmed, over which the SOC did not fall by the pipeline's "
+                + "minimum drop (a frozen SOC, or a rise no charge accounts for), so its "
+                + "energy was not measured. Distance, times, speed and position are as "
+                + "measured; Energy Change, every Energy Performance column and Battery "
+                + "Capacity are blank, and EP Confidence is blank with the reason "
+                + "NO_ENERGY. Such a trip is no capacity donor and no EP statistic "
+                + "includes it."
+            )
     for dr, dt in enumerate(def_texts):
         defs_ws.write(dr, 0, dt, def_fmt)
     defs_ws.set_column(0, 0, max(len(t) for t in def_texts) * 0.9, def_fmt)
@@ -500,7 +523,7 @@ def _write_excel_report(
     ws = workbook.add_worksheet("Report")
     _write_report_sheet(workbook, ws, rows, headers)
     _write_graphs_sheet(workbook, rows, headers)
-    _write_definitions_sheet(workbook, headers)
+    _write_definitions_sheet(workbook, headers, rows)
 
     workbook.set_properties(
         {

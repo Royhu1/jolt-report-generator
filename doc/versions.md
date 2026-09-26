@@ -1041,3 +1041,123 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   every other segment stays as its golden).
 
   Full suite: **1451 passed, 4 skipped** (3.8.0: 1412 passed, 4 skipped).
+
+## 3.9.0 — speed trips kept on the odometer's word (opt-in)
+
+- **Report output: unchanged for every configured vehicle — the new keys are opt-in and
+  no pipeline sets them.** Data namespace: unchanged, still `3.3.0/`. Verified offline:
+  the four EV fixture workbooks built through `JOLTReportGenerator.generate_report` itself
+  — the per-leg loop, capacity correction, EP grading, Stop insertion and writer, over a
+  mocked SRF surface — match 3.8.1 in all 8066 cells, with identical capacity ledgers, and
+  so does a workbook of one day of a configured vehicle's real feed with the shipped
+  configs (1555 cells); every registered fixture regenerates its golden byte for byte,
+  also with `keep_odometer_confirmed_trips: false`; and a replay of the segmentation over
+  7859 persisted raw telematics legs of the 16 configured EV vehicles (9148 charges, 41617
+  trips) gives identical segments under 3.8.1 and 3.9.0.
+- **Why.** On a speed-branch feed without energy-counter readings (every energy is
+  ΔSOC × capacity, the SOC in 0.4-point steps), the speed signal finds trips that the
+  SOC / energy floors (`min_soc_drop`, `min_energy_kwh`) then reject, although the
+  odometer confirms the movement; the driving sits inside Stop rows. Over three operating
+  periods of about three months each: 130 such trips (533 km), 115 (134 km) and 296
+  (422 km). The long ones fail in two ways:
+  - *the SOC rises across the trip*: the vehicle charged while the telematics were
+    silent, and the feed kept sending the SOC from before the charge until the vehicle
+    was already moving, then jumped (a stale 27.6 % until 05:45, 95.6 % at 05:49). The
+    charge detector places a +68 % charge at the jump, inside a 71 km speed trip whose
+    SOC then reads 27.6 → 81.6 %; three trips of 70–81 km are lost this way;
+  - *the SOC is frozen while driving*: 85.6 % over 41 readings and 58 km, or, on a day
+    that interleaves a frozen SOC stream with a live one, 83.6 % at both ends of two
+    38 km trips (the alternation also makes the charge detector find charges between the
+    two streams, as it does without this release).
+
+  The short hops (1.4 km on average in the third period) fail the 1-point floor at the
+  feed's 0.4-point resolution.
+- **`speed_params.keep_odometer_confirmed_trips`** (new; bool, default `false`, only
+  `true` switches it on) and **`speed_params.min_confirmed_distance_km`** (new; a positive
+  number, default `0.5`). In `find_discharge_segments_by_speed` (new keywords of the same
+  names, and `charge_segs`, which `run_segment_detection` now passes), a trip the SOC /
+  energy floors reject is kept when the odometer confirms it — at least
+  `min_confirmed_distance_km` between the readings its distance is taken from, a part of
+  a trip confirmed on its own:
+  - it is first cut at every charge of the leg that overlaps it, so nothing kept overlaps
+    a charge row (a charge covering the whole trip leaves nothing);
+  - where the SOC rose across the trip and a charge cut it, each part is measured as a
+    trip in its own right, under the same floors and capacity band, its SOC from its own
+    first reading — after the charge the one past the jump — so the trip starts where the
+    charge ends, with its normal energy source; a part the floors reject is kept
+    distance-only, and so is one whose SOC change rests on a single physically impossible
+    step (the EP-confidence `SOC_STEP` `poor` test: a drop faster than 300 %/h carrying at
+    least half the change), which the charges an interleaving feed produces would
+    otherwise turn into energy; a part the capacity band rejects is dropped;
+  - otherwise (a frozen SOC, a rise no charge accounts for, a drop below the floor) each
+    part is kept **distance-only**: times, distance, SOC readings and position as
+    measured, `delta_energy_kwh` NaN, `energy_source` `"distance_only"`
+    (`columns.DISTANCE_ONLY_SOURCE`), no capacity, no energy anchors. Without a rise
+    across the trip a charge inside it is not measured beside: it is no jump.
+
+  A trip the capacity band rejects is not kept this way (keeping it is
+  `keep_trips_outside_cap_band`'s decision), and a trip that passes the floors is left
+  exactly as it is. The SOC floor is applied before the energy cascade, so on a feed with
+  an energy counter a trip it rejects comes out distance-only as well: the key keeps the
+  trip, not an energy the floor rejected. The detector marks each trip it keeps this way;
+  `run_segment_detection` removes the marker straight away and logs the number per leg.
+- **A distance-only trip downstream.** Its row is a driving row with its distance,
+  times, speed, position, SOC readings, mass and cumulative distance; `Energy Change`,
+  `Energy Performance` and both corrected EPs are `=NA()`, and so is `EP_exclude_aux`
+  (the row states no EP of any kind; its propulsion and recuperation cells stay as
+  measured); `Battery Capacity` is blank; `EP Confidence` is blank with the reason
+  `NO_ENERGY` (`ep_confidence.CODE_NO_ENERGY`, returned by `assess_ep_confidence` for
+  that energy source). It is no capacity donor (live, backfill, step 1, the ±1σ pass),
+  the charts pass it by, and a report holding one adds its definition to the Definitions
+  sheet — every other report's glossary is unchanged. In the segmentation, the mass
+  split leaves it whole, the mass merge never merges it — nor the trips either side of
+  it, whose merge would otherwise span its distance with their energy alone — and the
+  anchor ordering compares the trips either side of it with each other. A leg holding a
+  trip kept this way has a speed-branch result, so the SOC-branch fallback does not run
+  for it.
+- **What it recovers on the diagnosed feed** (read-only replay with the key on in an
+  in-memory copy of the vehicle's pipeline, the floors as configured, deduplicated over
+  overlapping raw files): in the three periods 85 / 47 / 227 trips, 514.5 / 118.4 /
+  408.0 km — 96.5 / 88.6 / 96.6 % of the rejected distance. Three are the trips after a
+  late charge, measured again: 76.4 km / 83.2 kWh, 69.8 km / 64.7 kWh (a charge, then
+  this trip, where the day had lost it) and 65.9 km / 62.8 kWh; every other one is
+  distance-only (a median of 1.4 / 1.7 / 1.6 km; the two 38 km trips of the interleaving
+  day, cut at its alternation charges, among them). Only candidates under 0.5 km stay
+  dropped (53 / 68 / 69, 12.4 / 15.5 / 14.2 km). No segment present without the key is
+  lost, and every charge is unchanged. With a floor at the feed's resolution as well
+  (`min_soc_drop` 0.4, a separate tuning decision), 239 of the recovered trips carry an
+  energy and 143 stay distance-only.
+- **Validation.** `load_pipeline_configs()` — and so the import-time load — validates the
+  two keys like the other checked keys: a switch that is not `true`/`false`, a distance
+  that is not a positive number, or either key anywhere but in `speed_params` fails with
+  a `ValueError` naming the pipeline and the key. A distance that bypasses the loader is
+  refused by the detector when the switch is on.
+- **Callers outside the package.** New names: `columns.DISTANCE_ONLY_SOURCE`,
+  `ep_confidence.CODE_NO_ENERGY`, `segmentation.speed_detection.DEFAULT_MIN_CONFIRMED_DISTANCE_KM`;
+  `segmentation.timeutil._in_form_of` (moved from `detection`, still imported there). A
+  consumer of the segments or the report rows of a pipeline that switches the key on
+  must accept a discharge segment / driving row with `energy_source` `"distance_only"`,
+  a NaN energy and a `delta_soc_pct` that may be zero or positive. A segment returned by
+  `find_discharge_segments_by_speed` itself may carry the private marker;
+  `run_segment_detection` never returns it. The fixture EVSPD01 (a counter feed) gains
+  one distance-only yard move with the key on (1.95 km at a SOC of 99 % after a charge).
+- **Test suite.** New: a fixture, `EVSPD02` — one day of the diagnosed feed, anonymised,
+  its frozen pipeline with the key off — with its golden; 55 unit tests of the option (the
+  default off and only `true` switching it on, a trip that passes unchanged, a frozen SOC,
+  a drop below the floor and one a lower floor measures, a rise no charge accounts for,
+  no SOC at all, a counter feed, the threshold at and around a trip's distance, no
+  odometer movement or readings, an invalid threshold, the jump charge and the trip
+  measured again from its end, the part before it kept or dropped, a part the floors or
+  the capacity band reject, a part whose change is one impossible step, a charge inside a
+  trip without a rise, a charge covering the trip, the cutting of a window at charges in
+  every position and time-zone form, the merge barrier, the whole split, the anchor
+  ordering across a distance-only trip, through `run_segment_detection` with the marker
+  removed and the count logged, the SOC fallback replaced, the pipeline threshold, and
+  downstream the row, the grade, the donor exclusion, `_finalize_rows` and the workbook
+  with its glossary); 23 validation tests; and 13 fixture-driven integration tests (every
+  golden with the key off, fixtures without a rejected trip unchanged with it, the lost
+  trip coming out as a charge then the trip, the hops kept distance-only, nothing
+  overlapping a charge, a larger threshold, a lower floor, the counter fixture's yard
+  move, and the day's report rows through `_finalize_rows`).
+
+  Full suite: **1547 passed, 4 skipped** (3.8.1: 1451 passed, 4 skipped).

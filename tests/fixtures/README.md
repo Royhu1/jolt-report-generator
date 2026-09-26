@@ -12,7 +12,8 @@ fixtures/
 │   ├── EVSPD01/raw_2025-06-27_0000.csv      # EV, speed branch, full AC/DC counters
 │   ├── EVSOC01/raw_2026-04-24_0000.csv      # EV, SOC branch (no energy counters)
 │   ├── EVMAD01/raw_2025-07-29_0000.csv      # EV, mad_tw_mean mass + merge_by_mass=false
-│   └── DSL01/logger_2025-10-07_0000.csv     # diesel SRF logger leg (real J1939 names)
+│   ├── DSL01/logger_2025-10-07_0000.csv     # diesel SRF logger leg (real J1939 names)
+│   └── EVSPD02/raw_2025-11-25_0042.csv      # EV, speed branch, SOC-only: a charge surfacing inside a trip
 ├── raw_fixtures.json        # the registry: alias -> {"path", "kind": "ev" | "diesel"}
 ├── configs/                 # FROZEN vehicles.json / pipelines.json for the aliases
 ├── expected/                # golden segmentation snapshots (JSON), one per registered fixture
@@ -28,6 +29,7 @@ fixtures/
 | `EVSPD01` | 925 x 69 | a Volvo FM Electric on `volvo_speed_02` | The **speed branch** end to end: trips detected from `wheel_based_speed`, discharge energy from the `total_electric_energy_used_plugged_in_included` counter, charges from the AC/DC counters (`ac_dc`), real mass variation across the day, and a leg that triggers the "anchor overlap clamp skipped" degradation. Also the vehicle that opts in to the SOC-energy fallback. |
 | `EVSOC01` | 338 x 15 | a Mercedes eActros 600 on `mercedes_soc` | The **SOC branch**: a deliberately narrow feed with no AC/DC, no moving-energy and no total-energy-plugged-in column, so every leg resolves to `soc_estimate` and the capacity seed drives the energy. Also exercises the pipeline's `min_trip_distance_km` gate. |
 | `EVMAD01` | 430 x 62 | a Scania P-series BEV on `scania_speed_00` | The two non-default mass behaviours together: vehicle-level `mass_agg: "mad_tw_mean"` (beating the pipeline's `iqr_median`) and pipeline-level `merge_by_mass: false`. Discharge energy resolves to `moving_energy`, giving a third energy source. |
+| `EVSPD02` | 424 x 15 | a DAF XD on `daf_speed_00` | An **SOC-only feed on the speed branch** (no energy counter readings, SOC in 0.4-point steps), for `speed_params.keep_odometer_confirmed_trips`: the day's first trip is lost to the SOC floors because a charge taken while the telematics were silent surfaces after the vehicle has set off (a stale 27.6 %, then 95.6 %), and short hops with a frozen or barely falling SOC fail the 1-point floor. Its frozen pipeline has the key off, so its golden is the day as it is reported without it. |
 | `DSL01` | 544 x 20 | a DAF XF 450 diesel | The **diesel logger path**: `index_col=0` timestamps, real J1939 channel names (`LFC engine total fuel used`, `VDHR hr total vehicle distance`, `CVW gross combination vehicle weight`, Channel-7 weather, `EEC2`/`EBC1` pedals). Doubles as the source of realistic Logger channel data for the `LoggerPatcher` tests. |
 
 ## De-identification
@@ -124,6 +126,8 @@ diesel one (every trip's full metrics dict). The four originals:
 | `segments_EVSOC01.json` | All 3 charge + 6 discharge segments from the SOC branch. |
 | `segments_EVMAD01.json` | All 3 charge + 10 discharge segments with `merge_by_mass: false`. |
 | `diesel_segments_DSL01.json` | The single diesel trip's full 20-key metrics dict. |
+
+Added since: `segments_EVSPD02.json` (2 charge + 5 discharge segments, the key off).
 
 Each file records the `alias` and the `source` fixture path so a golden can never
 drift onto a different input. Timestamps are ISO strings that keep their offset

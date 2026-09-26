@@ -11,6 +11,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from ..columns import DISTANCE_ONLY_SOURCE
 from .constants import (
     _CAPACITY_OUTSIDE_BAND_KEY,
     MASS_COL,
@@ -544,7 +545,8 @@ def split_discharge_by_mass(
     For each discharge segment, detect whether mass_cluster changes within its
     time window; if so, split the segment at that time point into multiple
     sub-segments (each with a consistent mass cluster). Segments with no detected
-    change are left unchanged.
+    change are left unchanged, and so is a distance-only trip (``energy_source``
+    ``"distance_only"``), which has no energy to share out.
 
     Optional zero-speed split-point filter (Scheme B)
     -------------------------------------------------
@@ -568,6 +570,11 @@ def split_discharge_by_mass(
     """
     result: list[dict] = []
     for seg in discharge_segs:
+        if seg.get("energy_source") == DISTANCE_ONLY_SOURCE:
+            # No energy to share out between the parts: a distance-only trip
+            # stays whole.
+            result.append(seg)
+            continue
         splits = _detect_cluster_transitions(
             df_raw,
             seg["start_time"],
@@ -771,6 +778,8 @@ def merge_discharge_by_mass(
 
     Merge conditions (all must hold):
     - Adjacent segments have the same dominant mass_cluster (same mass class)
+    - Neither is a distance-only trip (``energy_source`` ``"distance_only"``),
+      which has no energy to add
     - No charge segment in the gap
     - The gap (stationary duration) < ``max_merge_gap_min`` (if provided)
 
@@ -840,6 +849,14 @@ def merge_discharge_by_mass(
             # Different cluster → load/unload event, keep separate
             if c_cur != c_next:
                 break
+            # A distance-only trip has no energy to add to a merge, so it is
+            # never merged: the merged trip would state an energy for a distance
+            # it did not measure. It also keeps the trips either side of it apart.
+            if (
+                seg.get("energy_source") == DISTANCE_ONLY_SOURCE
+                or discharge_segs[j].get("energy_source") == DISTANCE_ONLY_SOURCE
+            ):
+                break
             # Charge in the gap → do not merge
             gap_start = _to_utc(seg["end_time"])
             gap_end = _to_utc(discharge_segs[j]["start_time"])
@@ -889,7 +906,9 @@ def _enforce_anchor_ordering(discharge_segs: list[dict], reg: str = "") -> int:
     ``effective_capacity_kwh`` from the anchor relative values (already in kWh);
     a segment kept outside the capacity band keeps no capacity.
     Only segments with an actual overlap are modified (the sparse-counter case);
-    when the counter has readings in the gap there is no overlap → no change.
+    when the counter has readings in the gap there is no overlap → no change. A
+    distance-only trip (``energy_source`` ``"distance_only"``) has no anchors and
+    is passed over: the trips either side of it are compared with each other.
 
     Relationship between the anchor relative values and energy (see find_discharge_segments_by_speed):
         delta_energy_kwh = -(anchor_end_rel_kwh - anchor_start_rel_kwh)
@@ -903,7 +922,13 @@ def _enforce_anchor_ordering(discharge_segs: list[dict], reg: str = "") -> int:
     # 1. Defensively sort by start_time (only to determine adjacency; the segment
     #    dicts are shared references, so in-place modification propagates back to
     #    discharge_segs without changing the caller list's original order).
-    segs = sorted(discharge_segs, key=lambda s: _to_utc(s["start_time"]))
+    #    A distance-only trip has no energy anchors and takes no part: the trips
+    #    either side of it are compared with each other, as they would be without
+    #    it.
+    segs = sorted(
+        (s for s in discharge_segs if s.get("energy_source") != DISTANCE_ONLY_SOURCE),
+        key=lambda s: _to_utc(s["start_time"]),
+    )
 
     def _usable_anchor(s: dict) -> bool:
         # soc_estimate segments have no real counter anchor (rel is NaN) → skip

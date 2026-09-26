@@ -16,10 +16,15 @@ Both modes output the following key fields:
                        discharge preferred: total_electric_energy_used_plugged_in_included;
                        fallback: electric_energy_wheelbased_speed_over_zero;
                        last resort: SOC × nominal_kwh estimate.
+                       NaN on a distance-only trip (below).
   energy_source      : 'ac_dc'         — charging, from the AC+DC columns
                        'total_energy'  — discharging, from the total_electric_energy_used_* column
                        'moving_energy' — discharging, from the wheelbased_speed_over_zero column
                        'soc_estimate'  — no energy column available, estimated from SOC × nominal_kwh
+                       'distance_only' — a speed trip kept on the odometer's word although
+                                         the SOC / energy floors rejected it
+                                         (speed_params.keep_odometer_confirmed_trips):
+                                         its energy is NaN, its capacity None
   delta_moving_kwh   : cumulative electric_energy_wheelbased_speed_over_zero difference (kWh, >= 0);
                        None when the data is unavailable.
 

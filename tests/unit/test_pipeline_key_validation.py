@@ -1,12 +1,13 @@
 """Load-time validation of the pipeline keys with a checked value.
 
 ``load_pipeline_configs()`` — and so the import-time load of ``PIPELINE_CONFIGS``
-— checks two opt-in keys: ``soc_event_spike_pct`` at the top level of a pipeline
-(a positive number of SOC percentage points) and ``keep_trips_outside_cap_band``
-in its ``speed_params`` (``true`` / ``false``). A value of the wrong kind, or
-either key where it is not read, fails the load with a ``ValueError`` naming the
-pipeline and the key. Absent means off, and a pipeline without either key loads
-exactly as written.
+— checks the opt-in keys: ``soc_event_spike_pct`` at the top level of a pipeline
+(a positive number of SOC percentage points), and in its ``speed_params``
+``keep_trips_outside_cap_band`` and ``keep_odometer_confirmed_trips`` (``true`` /
+``false``) and ``min_confirmed_distance_km`` (a positive number of kilometres).
+A value of the wrong kind, or a key where it is not read, fails the load with a
+``ValueError`` naming the pipeline and the key. Absent means off, and a pipeline
+without any of them loads exactly as written.
 """
 
 from __future__ import annotations
@@ -143,6 +144,87 @@ def test_the_spike_threshold_inside_a_group_is_refused(load, group):
         f"not in {group}",
     ):
         load(_pipeline(**{group: {"soc_event_spike_pct": 3}}))
+
+
+# ── The odometer-confirmed trips: a switch and its threshold ─────────────────
+
+
+@pytest.mark.parametrize("value", [True, False], ids=str)
+def test_the_odometer_switch_loads_as_a_flag(load, value):
+    pipeline = _pipeline(speed_params={"keep_odometer_confirmed_trips": value})
+    assert load(pipeline) == {"ut_speed": pipeline}
+
+
+@pytest.mark.parametrize("value", [0.5, 2, 0.05], ids=str)
+def test_a_positive_confirmed_distance_loads(load, value):
+    pipeline = _pipeline(
+        speed_params={
+            "keep_odometer_confirmed_trips": True,
+            "min_confirmed_distance_km": value,
+        }
+    )
+    assert load(pipeline) == {"ut_speed": pipeline}
+
+
+def test_every_speed_switch_together_loads(load):
+    pipeline = _pipeline(
+        {"soc_event_spike_pct": 3},
+        speed_params={
+            "keep_trips_outside_cap_band": True,
+            "keep_odometer_confirmed_trips": True,
+            "min_confirmed_distance_km": 1.0,
+        },
+    )
+    assert load(pipeline)["ut_speed"] == pipeline
+
+
+@pytest.mark.parametrize(
+    "value", ["true", 1, 0, None, "yes"], ids=["text", "one", "zero", "null", "yes"]
+)
+def test_an_odometer_switch_that_is_not_a_flag_is_refused(load, value):
+    with pytest.raises(
+        ValueError,
+        match=r"pipelines\.json: ut_speed: speed_params\.keep_odometer_confirmed_trips "
+        r"must be true or false",
+    ):
+        load(_pipeline(speed_params={"keep_odometer_confirmed_trips": value}))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -0.5, "0.5", True, None, math.nan],
+    ids=["zero", "negative", "text", "flag", "null", "nan"],
+)
+def test_a_confirmed_distance_that_is_not_a_positive_number_is_refused(load, value):
+    with pytest.raises(
+        ValueError,
+        match=r"pipelines\.json: ut_speed: speed_params\.min_confirmed_distance_km "
+        r"must be a positive number of kilometres",
+    ):
+        load(_pipeline(speed_params={"min_confirmed_distance_km": value}))
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [("keep_odometer_confirmed_trips", True), ("min_confirmed_distance_km", 0.5)],
+)
+def test_an_odometer_key_at_the_top_level_is_refused(load, key, value):
+    # Only speed_params reach the speed detector: at the top level it would be
+    # silently ignored.
+    with pytest.raises(ValueError, match=f"{key} belongs in speed_params"):
+        load(_pipeline({key: value}))
+
+
+@pytest.mark.parametrize("group", ["charge_params", "discharge_params"])
+@pytest.mark.parametrize(
+    "key, value",
+    [("keep_odometer_confirmed_trips", True), ("min_confirmed_distance_km", 0.5)],
+)
+def test_an_odometer_key_in_another_group_is_refused(load, group, key, value):
+    with pytest.raises(
+        ValueError, match=f"{key} belongs in speed_params, not in {group}"
+    ):
+        load(_pipeline(**{group: {key: value}}))
 
 
 def test_the_error_names_the_offending_pipeline(load, monkeypatch, tmp_path):

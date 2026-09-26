@@ -92,7 +92,7 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 ├── logger_patcher.py              # LoggerPatcher — backfill Logger Link + weather/mass (EV)
 ├── weather_patcher.py             # WeatherPatcher — coarse origin/dest OpenWeather (default)
 ├── weather_patch.py               # patch_weather() + CLI — coarse (default) / fine (opt-in) dispatch
-├── columns.py                     # HEADERS / DIESEL_HEADERS, leg-type predicates, _row_col_index, _is_nan
+├── columns.py                     # HEADERS / DIESEL_HEADERS, leg-type predicates, _row_col_index, _is_nan, DISTANCE_ONLY_SOURCE
 ├── charts.py                      # CHART_STYLE, CHART_SPECS_EV/DIESEL, chart_specs_for
 ├── row_builder.py                 # _seg_to_row + metric helpers, URL builders, postcode cache, Stop synthesis
 ├── excel_writer.py                # _write_na, _write_excel_report (report/graphs/definitions sheets)
@@ -202,7 +202,7 @@ as a fallback.
 | `segment_algorithms.py` | facade re-exporting the whole `segmentation/` surface (public + internally-used privates) on the flat import path |
 | `capacity.py` | effective-capacity post-processing `_correct_effective_capacity()`, ledger persistence `_persist_effective_capacity()`, donor helpers; also re-exposed as `JOLTReportGenerator` staticmethods |
 | `diesel_pipeline.py` | `process_diesel_leg()` — SRFLOGGER_V1 channels → diesel rows |
-| `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan` |
+| `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan`, the `Energy Source` value of a distance-only trip (`DISTANCE_ONLY_SOURCE`) |
 | `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows` |
 | `energy_correction.py` | `battery_elevation_energy_kwh()` — battery-side energy of a net elevation change (`ELEVATION_ENERGY_EFFICIENCY = 0.90`); shared by `row_builder` and `capacity` so both corrected-EP paths agree |
 | `ep_confidence.py` | per-row EP-confidence grading — `attach_ep_audits()` measures the diagnostics in the segmentation layer (it needs the counter anchors), `assess_ep_confidence()` is the single rule engine, `regrade_rows()` is the authoritative final pass |
@@ -357,8 +357,9 @@ instead:
   column mappings describe the feed, the capacity keys and the ledger are the vehicle's
   battery state, `fuel_type` / `srf_reg` its identity, and the operator has its own
   dated `operators` list. The settings a pipeline carries (`reconcile_charge_boundaries`,
-  `soc_event_spike_pct`, `speed_params.keep_trips_outside_cap_band`, …) are not vehicle
-  settings: a window reaches them by switching its `pipeline` to one that sets them.
+  `soc_event_spike_pct`, `speed_params.keep_trips_outside_cap_band`,
+  `speed_params.keep_odometer_confirmed_trips`, …) are not vehicle settings: a window
+  reaches them by switching its `pipeline` to one that sets them.
 - `load_vehicle_configs()`, and so the import-time load, rejects a malformed list with a
   `ValueError` naming the vehicle and the override: a key outside the allow-list, a
   value of the wrong kind (a flag that is not `true`/`false`, a duration or gap that is
@@ -416,7 +417,9 @@ set and the last column **shared** by both, and every hardcoded patcher column i
 Every trip row carries a grade for its own `Energy Performance (kWh/km)` —
 `good` / `caution` / `poor` — plus the check codes and measured values behind it.
 Charge and Stop rows, and trips with no usable distance, are left **blank**: they state
-no EP, so there is nothing to grade. Diesel reports do not carry the pair (their energy
+no EP, so there is nothing to grade. A distance-only trip (`Energy Source`
+`distance_only`) states no EP either and is not graded, but its reason reads
+`NO_ENERGY`, so the row says why. Diesel reports do not carry the pair (their energy
 comes from the LFC fuel counter, whose failure modes are different ones).
 
 The rules, their thresholds and the mechanism each one detects live in
@@ -475,6 +478,12 @@ disagreement between counter energy and ΔSOC in opposite ways — the band key 
 counter, the fallback trusts the SOC — so on a vehicle with `soc_energy_fallback`, a trip
 the band key keeps is one the fallback can no longer reach.
 
+A distance-only trip (`speed_params.keep_odometer_confirmed_trips`, `Energy Source`
+`distance_only`) has neither an energy nor a capacity, and takes no part either: it is no
+donor, on the live path or in the backfill, the step-1 `soc_estimate` rewrite passes it
+by, and the ±1σ pass never judges it. A trip that option measured again after a charge
+is an ordinary trip in all of this.
+
 **Persistence (ledger, `_persist_effective_capacity()`)**: after generation the period's
 donor capacity `(kwh, n)` — from `_period_capacity_from_rows()` on the corrected rows,
 **before** Stop insertion — is merged into `effective_capacity_quarterly[period_key]`,
@@ -513,13 +522,16 @@ nothing.
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
 | `speed_params` | `speed_threshold_kmh` / `min_stop_duration_min` / `min_trip_duration_min` / `min_soc_drop` / `min_energy_kwh` | speed-branch trip boundaries + lenient SOC/energy checks |
 | `speed_params` | `keep_trips_outside_cap_band` | bool, default `false` (only `true` switches it on): keep a speed trip on counter energy whose SOC-implied capacity lies outside the capacity band, with no capacity, instead of dropping it — see *Segmentation algorithms* |
+| `speed_params` | `keep_odometer_confirmed_trips` | bool, default `false` (only `true` switches it on): keep a speed trip the SOC / energy floors (`min_soc_drop` / `min_energy_kwh`) reject when the odometer confirms it — measured again after a charge that surfaced inside it, else distance-only (`Energy Source` `distance_only`, no energy) — see *Segmentation algorithms* |
+| `speed_params` | `min_confirmed_distance_km` | positive number, default `0.5`: the odometer distance a trip (or a part of one) needs for `keep_odometer_confirmed_trips`; read only with that switch on |
 
-`load_pipeline_configs()` — and so the import-time load — validates the two keys with a
-checked value: a `soc_event_spike_pct` that is not a positive number, a
-`keep_trips_outside_cap_band` that is not `true`/`false`, or either key where it is not
-read (the switch anywhere but in `speed_params`, the threshold inside a parameter group,
-which hands it to a detector as an unexpected argument) fails with a `ValueError` naming
-the pipeline and the key. The other keys are read as they stand.
+`load_pipeline_configs()` — and so the import-time load — validates the keys with a
+checked value: a `soc_event_spike_pct` or `min_confirmed_distance_km` that is not a
+positive number, a `keep_trips_outside_cap_band` or `keep_odometer_confirmed_trips` that
+is not `true`/`false`, or any of them where it is not read (a `speed_params` key anywhere
+but in `speed_params`, the spike threshold inside a parameter group, which hands it to a
+detector as an unexpected argument) fails with a `ValueError` naming the pipeline and the
+key. The other keys are read as they stand.
 
 > Which fence suits a given vehicle depends on its GCVW channel (a bursty or
 > over-reading channel wants a robust fence). The schema and loader live here; the
@@ -539,7 +551,9 @@ run_segment_detection
   │                           event rows standing out above the periodic readings)
   ├─ branch=="soc":   find_charge_segments_by_soc + find_discharge_segments_by_soc
   ├─ branch=="speed": find_charge_segments_by_soc + find_discharge_segments_by_speed
-  │                    (→ find_speed_trips; falls back to SOC if the speed column is missing/all-zero)
+  │                    (→ find_speed_trips; handed the charges, which the opt-in
+  │                    keep_odometer_confirmed_trips cuts a rejected trip at; falls back
+  │                    to SOC if the speed branch yields no trip)
   ├─ cluster_mass_data → mass_cluster column
   ├─ split_discharge_by_mass  (split where the cluster label changes)
   ├─ merge_discharge_by_mass  (merge adjacent same-cluster; skipped when merge_by_mass=false)
@@ -625,6 +639,47 @@ run_segment_detection
   `run_segment_detection` removes the marker once those steps have run, so the segments
   leave with the public schema; the number of such trips per leg is logged. A trip on
   `soc_estimate` energy is dropped as before: nothing measured its energy.
+- **Trips kept on the odometer's word (opt-in, `speed_params.keep_odometer_confirmed_trips`)**:
+  the speed branch drops a trip whose SOC did not fall by `min_soc_drop`, or whose energy
+  is below `min_energy_kwh` or could not be measured at all. On a sparse feed that loses
+  real driving, its distance ending up inside a Stop row: the SOC freezes while the
+  vehicle drives, or a charge taken while the telematics were silent surfaces after the
+  vehicle has set off — the feed keeps sending the SOC from before the charge, then jumps
+  — so the charge detector places a charge inside the trip and the SOC *rises* across it.
+  With the key on, such a trip is kept when the odometer confirms it: at least
+  `min_confirmed_distance_km` (default 0.5 km) between the readings its distance is
+  taken from, a part of a trip confirmed on its own.
+  - It is first cut at every charge (of the same leg) that overlaps it, so nothing kept
+    overlaps a charge row; a charge covering the whole trip leaves nothing.
+  - Where the SOC rose across the trip and a charge cut it, each part is measured as a
+    trip in its own right, under the same floors and capacity band: its SOC runs from
+    its own first reading, after the charge the one past the jump, so the trip starts
+    where the charge ends, with the normal energy source. A part the floors reject is
+    kept distance-only (below), and so is one whose SOC change rests on a single
+    physically impossible step — the test the EP-confidence `SOC_STEP` check grades
+    `poor` (a drop faster than 300 %/h carrying at least half the change), as on a feed
+    interleaving a frozen and a live SOC, where such a charge is only the two streams
+    alternating; a part the capacity band rejects is dropped.
+  - Otherwise — a frozen SOC, a rise no charge accounts for, a drop below the floor —
+    each part is kept **distance-only**: times, distance, SOC readings and position as
+    measured; `delta_energy_kwh` NaN; `energy_source` `"distance_only"`
+    (`columns.DISTANCE_ONLY_SOURCE`); no capacity and no energy anchors. Without a rise
+    across the trip a charge inside it is no jump — on an interleaving feed it is the
+    two SOC streams alternating — so nothing is measured beside it.
+  - A trip the capacity band rejects is not kept this way (its energy was measured, and
+    keeping it is `keep_trips_outside_cap_band`'s decision), and a trip that passes the
+    floors is left exactly as it is, whatever it overlaps. The SOC floor is applied
+    before the energy cascade, so on a feed with an energy counter a trip it rejects
+    comes out distance-only too: the key keeps the trip, not an energy the floor
+    rejected.
+  - Downstream, a distance-only trip is a driving row without an energy: the mass split
+    leaves it whole, the mass merge never merges it (it also keeps the trips either side
+    of it apart, whose merge would otherwise span its distance with their energy
+    alone), and the anchor ordering compares the trips either side of it with each
+    other, as without it. A leg holding a trip kept this way has yielded a speed-branch
+    result, so the SOC-branch fallback does not run for it. The detector marks each
+    trip it kept this way; `run_segment_detection` removes the marker straight away and
+    logs the number per leg, re-measured and distance-only.
 - **Charge / trip boundary reconciliation (opt-in, `reconcile_charge_boundaries`)**: on a
   sparse telematics feed a charge ends at the first sample after the charging, which can
   be taken once the vehicle has set off — after the start of a trip found on the 1 Hz
@@ -660,8 +715,17 @@ value** (`_write_na`): Excel recalculates them to `#N/A`, while non-recalculatin
 (openpyxl `data_only=True`, `pandas.read_excel`) see a blank → NaN. Downstream readers
 must guard with a safe-number helper that tolerates both. A value the row builder leaves
 `None` rather than NaN — the `Battery Capacity (kWh)` of a trip without a capacity (no
-usable SOC change, or kept outside the capacity band) — is written as a plain blank
-cell, which those readers see the same way.
+usable SOC change, kept outside the capacity band, or distance-only) — is written as a
+plain blank cell, which those readers see the same way.
+
+A distance-only trip (`speed_params.keep_odometer_confirmed_trips`) is a green driving
+row with `Energy Source` `distance_only`: its distance, times, speed, position, SOC
+readings, mass, cumulative distance and the counters' own propulsion and recuperation
+cells are filled as for any trip, while `Energy Change (kWh)`, `Energy Performance
+(kWh/km)`, both corrected EPs and `EP_exclude_aux` are `=NA()`, `Battery Capacity (kWh)`
+is blank and `EP Confidence` is blank with the reason `NO_ENERGY`. The charts, which
+plot EP, pass it by. A report holding one adds its definition to the Definitions sheet;
+every other report's glossary is unchanged.
 
 **Graphs worksheet** — fixed-axis scatter + linear-fit charts from `CHART_SPECS_EV` /
 `CHART_SPECS_DIESEL` (selected by `chart_specs_for(headers)`) + one `CHART_STYLE`, so every
