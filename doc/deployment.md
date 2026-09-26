@@ -166,7 +166,11 @@ Production runs need none of it.
 Empty numeric cells are the Excel `=NA()` formula with an **empty cached value**: Excel
 recalculates them to `#N/A`, while non-recalculating readers (openpyxl
 `data_only=True`, `pandas.read_excel`) see a blank → NaN. Read report cells through a
-safe-number helper that tolerates both.
+safe-number helper that tolerates both. On a pipeline that sets
+`speed_params.keep_odometer_confirmed_trips`, a driving row can have its distance but no
+energy (`Energy Source` `distance_only`: energy and every EP `=NA()`, no capacity);
+anything computing energy or EP from the rows must skip it, as the NaN does for a
+safe-number reader.
 
 ## Un-onboarded registrations
 
@@ -217,8 +221,11 @@ dependencies include neither matplotlib nor scikit-learn.
   diesel is not graded. Do not unify them.
 - **Blank, not `=NA()`, where there is nothing to grade.** The two EP-confidence cells of
   a charge row, a Stop row or a trip without an EP value are left truly empty: nothing is
-  missing there, there is simply no grade. An EV report written before the pair existed
-  stops at `Operator`; the coarse weather patcher accepts both widths.
+  missing there, there is simply no grade. The one exception is a distance-only trip
+  (`Energy Source` `distance_only`, only on a pipeline that sets
+  `speed_params.keep_odometer_confirmed_trips`): no grade, and the reason `NO_ENERGY`. An
+  EV report written before the pair existed stops at `Operator`; the coarse weather
+  patcher accepts both widths.
 - **Append-only column contract.** The patchers address **hardcoded 1-based column
   indices** (temperature = EV column 38). New columns go at the end, never inserted.
   Import-time assertions (`_COL_* == HEADERS.index(<name>) + 1`) and
