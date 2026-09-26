@@ -17,6 +17,13 @@ def _to_utc(ts) -> pd.Timestamp:
     return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
 
 
+def _in_form_of(instant: pd.Timestamp, reference) -> pd.Timestamp:
+    """``instant`` (UTC) as ``reference`` writes its times: aware, or naive UTC."""
+    if pd.Timestamp(reference).tzinfo is None:
+        return instant.tz_convert(None)
+    return instant
+
+
 def frame_utc_date(df: pd.DataFrame, time_col: str = TIME_COL) -> dt.date | None:
     """The UTC date of the first valid timestamp of a raw telematics frame.
 

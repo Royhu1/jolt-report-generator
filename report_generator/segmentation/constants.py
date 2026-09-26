@@ -3,8 +3,8 @@ Segmentation shared constants and configuration loading.
 
 Raw-telemetry column-name constants (overridable per vehicle via
 ``VEHICLE_CONFIG``), the mass-clustering default thresholds, the private
-segment keys (the anchor set, the capacity-band marker), and the SINGLE load
-site of ``VEHICLE_CONFIG`` /
+segment keys (the anchor set, the capacity-band marker, the odometer-confirmed
+marker), and the SINGLE load site of ``VEHICLE_CONFIG`` /
 ``PIPELINE_CONFIGS`` (shared by reference across the package — every other
 module imports these bindings; do not add a second load site).
 
@@ -56,6 +56,14 @@ _ANCHOR_PRIVATE_KEYS: frozenset = frozenset(
 # a capacity donor. Only that opt-in path sets it, and ``run_segment_detection``
 # removes it once those steps have run.
 _CAPACITY_OUTSIDE_BAND_KEY = "_capacity_outside_band"
+
+# Marks a discharge segment the speed detector kept only because the odometer
+# confirmed it (``speed_params.keep_odometer_confirmed_trips``): a trip the SOC /
+# energy floors rejected, measured again on its part beside a charge that cut
+# it, or kept with its distance only. It serves only the per-leg count
+# ``run_segment_detection`` logs, which removes it straight after the detector
+# returns, so nothing downstream sees it.
+_ODOMETER_CONFIRMED_KEY = "_odometer_confirmed"
 
 # ── Config loading (from JSON files) ─────────────────────────────────────────
 from report_generator.configs import (

@@ -30,6 +30,7 @@ from report_generator.columns import (
     _RECUP_COL,
     _SPEED_COL,
     _WEIGHT_COL,
+    DISTANCE_ONLY_SOURCE,
     HEADERS,
     _row_col_index,
 )
@@ -976,7 +977,10 @@ def _seg_to_row(
         )
         # Auxiliary-load-excluded net traction efficiency: (propulsion − recuperation) / distance.
         # NaN if either propulsion / recuperation is NaN (counter missing) → NaN.
-        ep_exclude_aux = _ep_exclude_aux(propulsion_kwh, recuperation, distance)
+        # A distance-only trip states no EP of any kind, so it keeps this one NaN
+        # as well (its propulsion and recuperation cells stay as measured).
+        if energy_source != DISTANCE_ONLY_SOURCE:
+            ep_exclude_aux = _ep_exclude_aux(propulsion_kwh, recuperation, distance)
         if logger_speed_all is not None:
             speed_arr = _get_trip_speed_array(logger_speed_all, t_s, t_e)
             if speed_arr is not None:

@@ -2,9 +2,10 @@
 report_generator.columns
 ========================
 Report column contracts: the EV ``HEADERS`` / diesel ``DIESEL_HEADERS`` tuples,
-the row-tuple index helper, the leg-type predicates, the ``_is_nan`` guard, and
-the telematics source-column name constants. Imports nothing package-internal so
-every other report-builder module can depend on it without a cycle.
+the row-tuple index helper, the leg-type predicates, the ``_is_nan`` guard, the
+``Energy Source`` value of a distance-only trip, and the telematics source-column
+name constants. Imports nothing package-internal so every other report-builder
+module — and the segmentation layer — can depend on it without a cycle.
 
 Split out of report_builder.py, which re-exports these names for backward
 compatibility.
@@ -151,6 +152,15 @@ DIESEL_HEADERS = (
     # length assertion len(row) == len(DIESEL_HEADERS) - 1 follows automatically).
     "Operator",
 )
+
+
+#: ``Energy Source`` of a driving leg whose energy nothing measured: a trip the
+#: speed signal found and the odometer confirmed, but over which the SOC did not
+#: fall by the pipeline's minimum drop (``speed_params.keep_odometer_confirmed_trips``).
+#: The row carries its distance, times and speed; its energy, every EP column and
+#: its battery capacity are blank, so it is never a capacity donor and no EP
+#: statistic can include it.
+DISTANCE_ONLY_SOURCE = "distance_only"
 
 
 _CHARGE_LEG_RE = re.compile(r"^(AC|DC|Charge|Mix|estimated)", re.IGNORECASE)

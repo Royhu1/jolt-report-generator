@@ -80,7 +80,7 @@ import pandas as pd
 # segmentation layer or the report-builder layer without a cycle. Raw-telematics
 # column names are supplied by the caller rather than imported, so there is no
 # second copy of a column-name constant to drift.
-from .columns import _row_col_index, is_trip_leg
+from .columns import DISTANCE_ONLY_SOURCE, _row_col_index, is_trip_leg
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,10 @@ CODE_CAP_INCONS = "CAP_INCONS"  # counter energy and ΔSOC×capacity disagree
 CODE_SHORT_DIST = "SHORT_DIST"  # trip too short for EP to mean anything
 CODE_SPEED = "SPEED"  # elapsed average speed physically impossible
 CODE_EP_RANGE = "EP_RANGE"  # EP outside the plausible band (backstop)
+# Not a check: the reason a distance-only trip (Energy Source "distance_only") is
+# left without a grade. Nothing measured its energy, so it states no EP; the code
+# says why the row has none, where a grade would judge a number never reported.
+CODE_NO_ENERGY = "NO_ENERGY"
 
 # Reporting order within one severity: the most decisive, most specific mechanism
 # first, so the reason string leads with the finding a reader should act on and ends
@@ -553,7 +557,10 @@ def assess_ep_confidence(
     reason is a ``"CODE=value; …"`` string listing every triggered check, worst
     first. ``(None, None)`` means there is nothing to grade — a row without an EP
     value (a charge or Stop row, or a trip with no usable distance): a grade there
-    would imply a judgement about a number that was never reported.
+    would imply a judgement about a number that was never reported. A
+    distance-only trip (``energy_source`` ``"distance_only"``) has no EP either
+    and is not graded, but its reason is :data:`CODE_NO_ENERGY`, so the row says
+    why it has none.
 
     Parameters
     ----------
@@ -565,6 +572,8 @@ def assess_ep_confidence(
         since before the capacity correction the only reference available is the
         row's own implied value, which would compare a number with itself).
     """
+    if energy_source == DISTANCE_ONLY_SOURCE:
+        return None, CODE_NO_ENERGY
     if not _finite(ep_kwh_km) or not _finite(distance_km) or float(distance_km) <= 0:
         return None, None
 
@@ -724,7 +733,9 @@ def regrade_rows(
     capacity available for the counter-versus-SOC cross-check.
 
     Rows that are not trip rows, and trip rows without an EP value, are set blank:
-    grading a number the report does not state would be misleading.
+    grading a number the report does not state would be misleading. A
+    distance-only trip row is left ungraded too, with the reason
+    :data:`CODE_NO_ENERGY`.
 
     Parameters
     ----------

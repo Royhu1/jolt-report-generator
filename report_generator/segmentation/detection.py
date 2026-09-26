@@ -15,10 +15,12 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_float_dtype, is_object_dtype
 
+from ..columns import DISTANCE_ONLY_SOURCE
 from ..configs import _is_positive_number, effective_vehicle_config
 from ..ep_confidence import attach_ep_audits
 from .constants import (
     _CAPACITY_OUTSIDE_BAND_KEY,
+    _ODOMETER_CONFIRMED_KEY,
     AC_COL,
     DC_COL,
     MASS_COL,
@@ -49,7 +51,7 @@ from .speed_detection import (
     find_discharge_segments_by_speed,
     find_speed_trips,
 )
-from .timeutil import _to_utc, frame_utc_date
+from .timeutil import _in_form_of, _to_utc, frame_utc_date
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,12 @@ def run_segment_detection(
     charges, the trips, their diagnostics and the painter all work on the same
     cleaned frame; the caller's ``df_raw`` is never modified. A pipeline whose
     ``speed_params`` set ``keep_trips_outside_cap_band`` keeps the speed trips on
-    counter energy that the capacity band would drop, with no capacity (see
+    counter energy that the capacity band would drop, with no capacity; one whose
+    ``speed_params`` set ``keep_odometer_confirmed_trips`` keeps the speed trips
+    the SOC / energy floors would drop when the odometer confirms them —
+    measured again beside a charge that cut them, else with their distance only
+    (``energy_source`` ``"distance_only"``, no energy, never merged with a
+    neighbour) — and its legs are handed the charges to cut at (see
     :func:`find_discharge_segments_by_speed`).
 
     Parameters
@@ -341,8 +348,15 @@ def run_segment_detection(
                 f"  speed data: {_logger_reason}"
                 f" (detected {len(_logger_trips)} trips)"
             )
-        discharge_segs = find_discharge_segments_by_speed(df_raw, **speed_p)
+        # The charges go along for keep_odometer_confirmed_trips, which cuts a
+        # trip the SOC / energy floors reject at the charges it overlaps; the
+        # detector ignores them without that key.
+        discharge_segs = find_discharge_segments_by_speed(
+            df_raw, **speed_p, charge_segs=charge_segs
+        )
+        _log_odometer_confirmed_trips(discharge_segs, reg, suffix)
         # Fallback: if speed segmentation yields nothing, fall back to SOC-based
+        # (a leg with a trip kept on the odometer's word has yielded something)
         if not discharge_segs:
             discharge_segs = find_discharge_segments_by_soc(df_raw, **d_params)
 
@@ -598,6 +612,40 @@ def run_segment_detection(
 
 
 # =============================================================================
+# Trips kept on the odometer's word (opt-in, speed branch)
+# =============================================================================
+def _log_odometer_confirmed_trips(
+    discharge_segs: list[dict], reg: str, suffix: str
+) -> None:
+    """Count and unmark the trips ``keep_odometer_confirmed_trips`` kept.
+
+    The speed detector marks each segment it kept only because the odometer
+    confirmed it; the marker is removed here, straight after the detector
+    returns, so the mass split and merge, the diagnostics and the painter see
+    the public schema only. The number kept per leg is logged — those measured
+    again beside a charge that cut them, and those kept with their distance only.
+    """
+    n_measured = n_distance_only = 0
+    for seg in discharge_segs:
+        if seg.pop(_ODOMETER_CONFIRMED_KEY, None):
+            if seg.get("energy_source") == DISTANCE_ONLY_SOURCE:
+                n_distance_only += 1
+            else:
+                n_measured += 1
+    if n_measured or n_distance_only:
+        logger.info(
+            "  odometer-confirmed trips: %d the SOC / energy floors rejected are "
+            "kept — %d measured again beside the charge that cut them, %d with "
+            "their distance only (%s %s)",
+            n_measured + n_distance_only,
+            n_measured,
+            n_distance_only,
+            reg,
+            suffix,
+        )
+
+
+# =============================================================================
 # Charge / trip boundary reconciliation (opt-in post-pass)
 # =============================================================================
 def _reconcile_charge_boundaries(
@@ -665,13 +713,6 @@ def _reconcile_charge_boundaries(
             charge["end_time"] = _in_form_of(new_end, charge["end_time"])
             clamped += 1
     return clamped
-
-
-def _in_form_of(instant: pd.Timestamp, reference) -> pd.Timestamp:
-    """``instant`` (UTC) as ``reference`` writes its times: aware, or naive UTC."""
-    if pd.Timestamp(reference).tzinfo is None:
-        return instant.tz_convert(None)
-    return instant
 
 
 # =============================================================================

@@ -141,6 +141,11 @@ _PIPELINE_TOP_LEVEL_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
 }
 _PIPELINE_SPEED_PARAMS_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
     "keep_trips_outside_cap_band": (_is_flag, "true or false"),
+    "keep_odometer_confirmed_trips": (_is_flag, "true or false"),
+    "min_confirmed_distance_km": (
+        _is_positive_number,
+        "a positive number of kilometres",
+    ),
 }
 
 #: A pipeline's parameter groups, each handed to a detector as keyword arguments.
@@ -177,9 +182,11 @@ def load_pipeline_configs() -> dict:
     The keys with a checked value are validated here, so a malformed one fails
     the load — at import too, which goes through this function — with a
     ``ValueError`` naming the pipeline and the key: ``soc_event_spike_pct``
-    (top level) that is not a positive number, ``keep_trips_outside_cap_band``
-    (in ``speed_params``) that is not ``true`` / ``false``, or either key in the
-    wrong place, where it would be silently ignored or break a detector.
+    (top level) that is not a positive number, ``keep_trips_outside_cap_band`` or
+    ``keep_odometer_confirmed_trips`` (in ``speed_params``) that is not ``true`` /
+    ``false``, ``min_confirmed_distance_km`` (in ``speed_params``) that is not a
+    positive number, or any of them in the wrong place, where it would be
+    silently ignored or break a detector.
     """
     pipelines = _load_config_json("pipelines.json")
     _validate_pipeline_configs(pipelines)
