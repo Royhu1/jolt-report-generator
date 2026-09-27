@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # ~90 s, 1551 tests, fully offline
+pytest                       # ~90 s, 1560 tests, fully offline
 ```
 
 No `SRF_API_KEY`, no network, no writable state outside `tmp_path`.
@@ -25,7 +25,7 @@ tests/
 ├── test_general_pipeline.py # v3.1.0 general fallback pipeline contract
 ├── unit/                    # pure functions — no fixture data, no filesystem beyond tmp_path
 ├── integration/             # multi-module, driven by the committed raw fixtures
-│   └── conftest.py          # fixture-driven helpers (segmentation runner, golden loader)
+│   └── conftest.py          # fixture-driven helpers (segmentation runner, golden loader, consumer contract)
 └── fixtures/                # anonymised raw CSVs, frozen configs, goldens — see its README
 ```
 
@@ -41,7 +41,7 @@ The five contract files directly under `tests/` predate this suite.
 |------|-------|
 | Existing contract suite (`tests/*.py`) | 255 |
 | `unit/` | 941 |
-| `integration/` | 355 |
+| `integration/` | 364 |
 
 ## The offline guarantee
 
@@ -84,7 +84,10 @@ Four things enforce it, all in the top-level `tests/conftest.py`:
 | `raw_fixture_map` | `alias -> relative fixture path`. |
 
 And in `tests/integration/conftest.py`: `run_fixture_segmentation`, `load_golden`,
-`diesel_fixture_frame`.
+`diesel_fixture_frame`, and `check_consumer_contract` — the contract every
+registered EV fixture's segments are held to (required keys, chronology, sign
+convention, allowed energy sources; a distance-only trip carries an odometer
+distance but no energy and no capacity), as a check to call on any segmentation.
 
 **Never assert behaviour against the live `report_generator/configs/*.json`.** Use
 the frozen fixture configs, or a synthetic entry injected with

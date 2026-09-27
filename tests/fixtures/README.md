@@ -138,8 +138,9 @@ the same rules, so each measured diagnostic is pinned individually.
 
 Every registered fixture is checked against its golden by
 `tests/integration/test_registered_fixtures.py`, together with a consumer contract
-(required keys, chronology, sign convention, allowed energy sources), determinism,
-the de-identification rules above, and agreement between the registry, the files, the
+(required keys, chronology, sign convention, allowed energy sources; a distance-only
+trip carries an odometer distance but no energy and no capacity), determinism, the
+de-identification rules above, and agreement between the registry, the files, the
 frozen configs and the goldens. The four originals are additionally pinned by
 hand-written expectations in `test_segmentation_fixtures.py` and
 `test_diesel_pipeline_fixture.py`.

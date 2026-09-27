@@ -1154,10 +1154,18 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   ordering across a distance-only trip, through `run_segment_detection` with the marker
   removed and the count logged, the SOC fallback replaced, the pipeline threshold, and
   downstream the row, the grade, the donor exclusion, `_finalize_rows` and the workbook
-  with its glossary); 23 validation tests; and 13 fixture-driven integration tests (every
-  golden with the key off, fixtures without a rejected trip unchanged with it, the lost
-  trip coming out as a charge then the trip, the hops kept distance-only, nothing
-  overlapping a charge, a larger threshold, a lower floor, the counter fixture's yard
-  move, and the day's report rows through `_finalize_rows`).
+  with its glossary); 23 validation tests; and 23 fixture-driven integration tests (every
+  golden with the key off, fixtures without a rejected trip unchanged with it, the
+  charges and the trips already kept unchanged, the lost trip coming out as a charge then
+  the trip, the hops kept distance-only, nothing overlapping a charge, a larger
+  threshold, a lower floor, the counter fixture's yard move, the day's report rows
+  through `_finalize_rows`, every fixture keeping the consumer contract with the key on,
+  and the contract refusing a trip that breaks its promise). The consumer contract every
+  registered fixture's segments are held to (`check_consumer_contract`, shared from
+  `tests/integration/conftest.py`) takes a distance-only trip by what it promises —
+  `energy_source` `distance_only`, a NaN energy, no capacity, both odometer readings with
+  the end beyond the start — and holds every other trip to the sign convention as
+  before, so a fixture whose frozen pipeline switches the key on is guarded like any
+  other.
 
-  Full suite: **1547 passed, 4 skipped** (3.8.1: 1451 passed, 4 skipped).
+  Full suite: **1556 passed, 4 skipped** (3.8.1: 1451 passed, 4 skipped).
