@@ -109,6 +109,7 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 │   ├── soc_detection.py           # find_charge_segments_by_soc / find_discharge_segments_by_soc
 │   ├── speed_detection.py         # find_speed_trips / find_discharge_segments_by_speed
 │   ├── mass_clustering.py         # cluster_mass_data, split/merge/anchor functions
+│   ├── position_boundaries.py     # read_positions (stays + halts from the fixes) / settle_trip_boundaries (opt-in)
 │   └── detection.py               # run_segment_detection (the unified entry point; figure_hook seam)
 └── weather_fetcher/
     ├── openweather.py             # shared KeyManager / WeatherCache / WeatherFetcher (coarse + fine consume it)
@@ -357,7 +358,7 @@ instead:
   column mappings describe the feed, the capacity keys and the ledger are the vehicle's
   battery state, `fuel_type` / `srf_reg` its identity, and the operator has its own
   dated `operators` list. The settings a pipeline carries (`reconcile_charge_boundaries`,
-  `soc_event_spike_pct`, `speed_params.keep_trips_outside_cap_band`,
+  `position_trip_boundaries`, `soc_event_spike_pct`, `speed_params.keep_trips_outside_cap_band`,
   `speed_params.keep_odometer_confirmed_trips`, …) are not vehicle settings: a window
   reaches them by switching its `pipeline` to one that sets them.
 - `load_vehicle_configs()`, and so the import-time load, rejects a malformed list with a
@@ -517,6 +518,8 @@ nothing.
 | top level | `max_extend_minutes` | float, default 5.0; the zero_speed extension cap |
 | top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). The value feeds the Excel `Vehicle Mass (kg)` column and is re-used by the external figure / fine-tuning tooling. Vehicle-level override wins |
 | top level | `reconcile_charge_boundaries` | bool, default `false` (only JSON `true` switches it on): clamp a charge that overlaps a trip to the trip's boundary — see *Segmentation algorithms*. For a pipeline whose trips come from a higher-rate signal than its charges (Logger-speed trips on a sparse telematics feed); a vehicle reaches it through its `pipeline`, including a `period_overrides` window's |
+| top level | `position_trip_boundaries` | bool, default `false` (only JSON `true` switches it on): move each trip's boundaries onto the places the leg's positions show the vehicle stayed at — a trip that ended before the vehicle settled ends at its arrival, one that started after it had left starts at its departure, a stay seen on the way cuts it — see *Segmentation algorithms*. For a feed whose trip boundaries follow a signal that can stop or lag while the vehicle moves (a SOC that freezes, a mass reading that changes on the road); a vehicle reaches it through its `pipeline`, including a `period_overrides` window's |
+| top level | `position_params` | object, optional, read only with `position_trip_boundaries` on: `stay_radius_km` (default `0.5`), `stay_min_minutes` (default `30`), `stay_max_km` (default `5`) — the stay parameters, each a positive number |
 | top level | `soc_event_spike_pct` | positive number of SOC percentage points; absent = off. Before any detector reads the SOC, blank the SOC of each event row (`trigger_type` other than `TIMER`) that exceeds both the nearest preceding and the nearest following valid `TIMER`-row SOC by at least this much — see *Segmentation algorithms*. For a feed whose event rows can carry a stale SOC; no effect on a feed without a `trigger_type` column |
 | `charge_params` | `plateau_window_min` / `min_soc_rise` / `min_energy_kwh` | charge merge window + SOC-rise + energy thresholds |
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
@@ -527,8 +530,10 @@ nothing.
 
 `load_pipeline_configs()` — and so the import-time load — validates the keys with a
 checked value: a `soc_event_spike_pct` or `min_confirmed_distance_km` that is not a
-positive number, a `keep_trips_outside_cap_band` or `keep_odometer_confirmed_trips` that
-is not `true`/`false`, or any of them where it is not read (a `speed_params` key anywhere
+positive number, a `position_trip_boundaries`, `keep_trips_outside_cap_band` or
+`keep_odometer_confirmed_trips` that is not `true`/`false`, a `position_params` that is
+not an object of the three stay parameters, each a positive number, or any of them where
+it is not read (a stay parameter at the top level instead of in `position_params`) (a `speed_params` key anywhere
 but in `speed_params`, the spike threshold inside a parameter group, which hands it to a
 detector as an unexpected argument) fails with a `ValueError` naming the pipeline and the
 key. The other keys are read as they stand.
@@ -557,6 +562,9 @@ run_segment_detection
   ├─ cluster_mass_data → mass_cluster column
   ├─ split_discharge_by_mass  (split where the cluster label changes)
   ├─ merge_discharge_by_mass  (merge adjacent same-cluster; skipped when merge_by_mass=false)
+  ├─ _settle_on_positions     (opt-in post-pass, position_trip_boundaries: move the trip
+  │                            boundaries onto the stays the positions show; a moved trip
+  │                            is measured again by the detector that found it)
   ├─ _enforce_anchor_ordering (post-pass: clamp energy anchors so anchor_end(i) ≤ start(i+1))
   ├─ _reconcile_charge_boundaries (opt-in post-pass, reconcile_charge_boundaries: clamp a
   │                               charge overlapping a trip to the trip's boundary)
@@ -680,6 +688,53 @@ run_segment_detection
     result, so the SOC-branch fallback does not run for it. The detector marks each
     trip it kept this way; `run_segment_detection` removes the marker straight away and
     logs the number per leg, re-measured and distance-only.
+- **Trip boundaries from the positions (opt-in, `position_trip_boundaries`)**: a trip's
+  boundaries follow the signal its detector read, and that signal can stop or lag while
+  the vehicle moves. The SOC detector ends a trip at the last SOC step, so a SOC that
+  freezes while the vehicle drives on leaves the rest of the drive inside the Stop row
+  that follows, with 0 km; an integer SOC ends trips short of the depot, on the road in.
+  A mass split starts a trip where the new trailer mass was first read, on the road out,
+  and its first part, below the split's floors, is lost. A stop bridging that sees
+  movement bridges a depot visit with manoeuvres in it. With the key on, the leg's
+  telematics positions and odometer decide where the boundaries lie
+  (`segmentation/position_boundaries.py`):
+  - **Stays.** A stay is a run of consecutive fixes within `stay_radius_km` of the run's
+    first fix, over which the odometer advances no more than `stay_max_km` (so a round
+    trip back to the same spot is none), lasting `stay_min_minutes` — its first to last
+    fix, plus the part of the gap to the next fix elsewhere that the distance to it at
+    90 km/h leaves unexplained, since a feed falls silent while a vehicle stands. Runs
+    are taken greedily (the stay-point method); positions within the radius cannot end
+    one, a fix at a zero coordinate is none, and an isolated fix the vehicle would have
+    had to reach and leave faster than 250 km/h is ignored. The vehicle stood still
+    between two fixes when the odometer advanced no more than 0.05 km (without a reading
+    on both, when the positions lie within 0.1 km). A stay's arrival is its first fix
+    from which the vehicle stood still, its departure the last fix reached standing
+    still. A halt is a run of standing fixes spanning at least 5 minutes.
+  - **Boundaries.** A trip that ended before the vehicle settled — it is seen moving
+    between the fix at or after the trip's end and its arrival at the next stay — ends at
+    that arrival; one that started after the vehicle had left — seen moving between its
+    departure from the stay before and the fix at or before the trip's start — starts at
+    that departure. A halt on the way ends the move there. A boundary already at a place
+    (within a stay's fixes, or at a halt) stays where the detector put it, a precise one
+    between the last fix at a place and the first on the way included, and a boundary is
+    never moved over time another trip or a charge of the leg occupies.
+  - **On the way.** A stay the vehicle was seen standing at, arrival to departure, for
+    `stay_min_minutes` cuts a trip lying across it in two; a stay known only through a
+    silent gap cuts nothing.
+  - **Measured again.** A trip that changes is replaced by its windows, each measured as
+    a precomputed trip by the detector that found the trip — the speed detector with its
+    floors, capacity band and opt-ins, or the SOC detector's floors, capacity band and
+    `min_trip_distance_km` for the SOC branch and the speed branch's SOC fallback. A
+    window the floors reject is left out and becomes part of a Stop (a move from a depot
+    to its yard after a visit, say); when no window of a trip survives, the trip is kept
+    as it was. A trip that does not move is the detector's own dict, a leg where none
+    moves is handed on unchanged, and the pass never creates or merges a trip.
+  The pass runs on the trips as the mass split and merge left them, before the anchor
+  ordering, the charge reconciliation, the EP-confidence diagnostics and the figure hook,
+  so every caller gets the same trips; the number of trips moved, cut and kept, and of
+  windows dropped, is logged per leg. A SOC step that surfaces at the first fix after
+  the vehicle has parked — a frozen SOC catching up — falls to the trip that now ends at
+  that fix, and the EP-confidence `SOC_STEP` check grades the trip on that step.
 - **Charge / trip boundary reconciliation (opt-in, `reconcile_charge_boundaries`)**: on a
   sparse telematics feed a charge ends at the first sample after the charging, which can
   be taken once the vehicle has set off — after the start of a trip found on the 1 Hz
