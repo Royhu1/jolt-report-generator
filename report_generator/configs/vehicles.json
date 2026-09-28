@@ -848,7 +848,7 @@
     "description": "2025 Mercedes-Benz artic",
     "vin": null,
     "pipeline": "mercedes_soc",
-    "speed_col": "wheel_based_speed",
+    "speed_col": "speed",
     "ac_col": "battery_pack_ac_watthours",
     "dc_col": "battery_pack_dc_watthours",
     "total_energy_col": "total_electric_energy_used_plugged_in_included",
