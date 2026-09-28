@@ -51,6 +51,7 @@ from report_generator.capacity import (  # noqa: F401
 from report_generator.configs import apply_capacity_ledger
 from report_generator.data_class import ServerData
 from report_generator.data_fetcher import fetch_events
+from report_generator.depots import describe_bases, relabel_rows
 from report_generator.diesel_pipeline import (
     process_diesel_leg,
 )
@@ -369,7 +370,7 @@ class JOLTReportGenerator:
                 op_acc,
                 all_rows,
             )
-            # Skip the FPS main loop and home_point / charger reclassification
+            # Skip the FPS main loop
             fps_legs = []
 
         cumulative_km, home_point = self._process_fps_legs(
@@ -397,8 +398,6 @@ class JOLTReportGenerator:
             all_rows,
             ep_audits,
         )
-
-        self._reclassify_home_charging(all_rows, home_point)
 
         time_process = perf_counter()
         logger.info(
@@ -457,6 +456,15 @@ class JOLTReportGenerator:
         sorted_rows, period_cap_kwh, period_n, period_src = self._finalize_rows(
             sorted_rows, out_headers, is_diesel, cfg, soc_est_cap, ep_audits
         )
+
+        # ── Second pass: the run's bases and every trip's / charge's Leg Type ──
+        # The rows were built with provisional labels (no base known yet); now
+        # that the whole run is segmented, the bases of each operator are found
+        # from the run's own rows and every trip and charge is labelled against
+        # them. After _finalize_rows, which reads only whether a row is a trip, a
+        # charge or a Stop, so the labels are those of the final rows — exactly
+        # what the relabel patcher would compute from the written workbook.
+        self._assign_leg_types(sorted_rows, out_headers)
 
         return self._write_outputs(
             sorted_rows,
@@ -707,9 +715,14 @@ class JOLTReportGenerator:
         all_rows,
         ep_audits=None,
     ):
-        """Main EV loop: per FPS leg cache raw telematics, run segmentation, build
-        charge/discharge rows, and detect the home charging point. Returns the
-        updated (cumulative_km, home_point)."""
+        """Main EV loop: per FPS leg cache raw telematics, run segmentation and
+        build the charge/discharge rows. Returns ``(cumulative_km, home_point)``.
+
+        The rows carry provisional Leg Types — ``home_point`` (``None`` from
+        ``generate_report``) is only what the row builder labels against; the
+        run's bases and final labels come from :meth:`_assign_leg_types` once
+        every row is built. ``home_point`` is returned unchanged.
+        """
         for leg_idx, leg in enumerate(tqdm(fps_legs, desc="Processing FPS legs")):
             try:
                 # ── Application-level cache: cache the raw telematics CSV by leg URI ──
@@ -870,62 +883,41 @@ class JOLTReportGenerator:
                 if ep_audits is not None and seg.get("ep_audit") is not None:
                     ep_audits[audit_key(seg["start_time"])] = seg["ep_audit"]
 
-            if home_point is None and c_segs:
-                from geopy import Point as GeoPoint
-
-                for s in c_segs:
-                    lat_h = s.get("latitude")
-                    lon_h = s.get("longitude")
-                    if lat_h is not None and lon_h is not None:
-                        try:
-                            home_point = GeoPoint(float(lat_h), float(lon_h))
-                            logger.info("Home point: (%.4f, %.4f)", lat_h, lon_h)
-                        except Exception as exc:
-                            logger.debug(
-                                "Home point construction failed for a charge segment: %s",
-                                exc,
-                            )
-                        if home_point is not None:
-                            break
         return cumulative_km, home_point
 
-    def _reclassify_home_charging(self, all_rows, home_point):
-        """Post-process: relabel 'Away' charge rows within 0.5 km of the detected
-        home point as 'Home' (mutates all_rows in place)."""
-        # ── Post-processing: reclassify charge segments using the detected home_point ──
-        # The first charge segments were classified as Away while home_point was unknown; corrected here
-        if home_point is not None:
-            from geopy import Point as GeoPoint
-            from geopy.distance import geodesic
+    @staticmethod
+    def _assign_leg_types(sorted_rows, out_headers):
+        """Label every trip and charge row against the run's bases (in place).
 
-            _ri_leg_type = _row_idx("Leg Type")
-            _ri_origin = _row_idx("Origin (Lat, Lon)")
-            reclassified = 0
-            for _, row in all_rows:
-                lt = row[_ri_leg_type]
-                if not isinstance(lt, str) or "Away" not in lt:
-                    continue
-                origin_str = row[_ri_origin]
-                if not origin_str or not isinstance(origin_str, str):
-                    continue
-                m = re.match(
-                    r"Point\(([+-]?\d+\.?\d*)\s+([+-]?\d+\.?\d*)\)", origin_str
-                )
-                if not m:
-                    continue
-                lat_f, lon_f = float(m.group(1)), float(m.group(2))
-                try:
-                    if geodesic(home_point, GeoPoint(lat_f, lon_f)).km < 0.5:
-                        row[_ri_leg_type] = lt.replace("Away", "Home")
-                        reclassified += 1
-                except Exception as exc:
-                    logger.debug(
-                        "Home-distance reclassification failed for a row: %s", exc
-                    )
-            if reclassified:
-                logger.info(
-                    "Charge-segment reclassification: %d rows Away → Home", reclassified
-                )
+        :func:`report_generator.depots.relabel_rows` finds the bases of each
+        operator from the rows themselves and sets each row's Leg Type. A
+        failure here costs the labels, never the report: the rows keep their
+        provisional labels ("In Transit" / "<kind> Away") and a warning is
+        logged. Returns the assignment, or ``None`` after a failure.
+        """
+        try:
+            result = relabel_rows(sorted_rows, out_headers)
+        except Exception:
+            logger.warning(
+                "Leg-type labelling failed; the rows keep their provisional labels",
+                exc_info=True,
+            )
+            return None
+        for line in describe_bases(result.bases):
+            logger.info("Bases — %s", line)
+        logger.info(
+            "Leg types: %d trips and %d charges labelled against the run's "
+            "bases (%d differ from the provisional labels)",
+            result.trips,
+            result.charges,
+            result.n_changed,
+        )
+        if result.base_to_base:
+            logger.info(
+                "%d trips run from one base to another (labelled Return)",
+                result.base_to_base,
+            )
+        return result
 
     def _finalize_rows(
         self, sorted_rows, out_headers, is_diesel, cfg, soc_est_cap, ep_audits=None

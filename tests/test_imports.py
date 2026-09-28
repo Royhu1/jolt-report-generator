@@ -37,6 +37,7 @@ CORE_MODULES = [
     "report_generator.paths",
     "report_generator.cli",
     "report_generator.xlsx_patch_common",
+    "report_generator.depots",
     # report_builder split + facade (v3.1.0: html_viewer moved to the
     # report-visuals skill)
     "report_generator.report_builder",

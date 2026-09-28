@@ -31,6 +31,7 @@ from report_generator.charts import (
     empty_note_extent,
 )
 from report_generator.columns import DISTANCE_ONLY_SOURCE, HEADERS, _is_nan
+from report_generator.depots import leg_type_definition
 
 logger = logging.getLogger(__name__)
 
@@ -413,8 +414,7 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     if "Fuel Consumption (L/100km)" in headers:
         # Diesel report definitions
         def_texts = [
-            'Leg Type: "In Transit" = trip (green); "Stop" = parked/idling gap between trips (white). '
-            "Diesel vehicles have no charging events.",
+            leg_type_definition(diesel=True),
             "Vehicle Mass (kg): Gross combination vehicle weight (GCVW) read from the SRF Logger "
             '"CVW gross combination vehicle weight" channel at 1 Hz; reported value is the per-trip median.',
             "Fuel Used (L): Per-trip fuel consumption, computed from cumulative differences of the "
@@ -429,6 +429,7 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     else:
         # Electric report definitions
         def_texts = [
+            leg_type_definition(diesel=False),
             "SOC: State of Charge. The percentage of the battery capacity that is currently charged.",
             'Energy Source: "ac_dc" = charging energy from AC+DC telematics counters; '
             + '"total_energy" = discharge energy from total_electric_energy_used_plugged_in_included; '
