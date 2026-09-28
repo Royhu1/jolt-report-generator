@@ -144,6 +144,7 @@ _PIPELINE_TOP_LEVEL_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
 #: The keys a pipeline's top-level ``position_params`` object may carry — the
 #: stay parameters of ``position_trip_boundaries`` — each a positive number.
 _POSITION_PARAMS_KEYS = ("stay_radius_km", "stay_min_minutes", "stay_max_km")
+
 _PIPELINE_SPEED_PARAMS_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
     "keep_trips_outside_cap_band": (_is_flag, "true or false"),
     "keep_odometer_confirmed_trips": (_is_flag, "true or false"),

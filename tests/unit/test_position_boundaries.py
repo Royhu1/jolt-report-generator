@@ -369,3 +369,12 @@ def test_the_stay_parameters_are_checked_at_run_time():
         _checked_position_params({"position_params": {"radius": 1}}, "ut")
     with pytest.raises(ValueError, match="must be an object"):
         _checked_position_params({"position_params": [0.5]}, "ut")
+
+
+def test_the_loader_checks_the_parameters_the_pass_reads():
+    from report_generator import configs
+    from report_generator.segmentation.position_boundaries import (
+        POSITION_PARAM_DEFAULTS,
+    )
+
+    assert set(configs._POSITION_PARAMS_KEYS) == set(POSITION_PARAM_DEFAULTS)
