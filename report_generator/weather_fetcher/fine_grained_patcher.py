@@ -451,15 +451,12 @@ class FineGrainedWeatherPatcher:
             if t_s is None or t_e is None:
                 continue
 
-            # Within trip rows there are two sampling modes: those labelled
-            # "Trip"/"Transit" have a continuous GPS track and take multi-point
-            # sampling; the remaining trip rows (Outbound/Return/In House) fall back
-            # to the origin/dest endpoints (charge/Stop were already skipped above
-            # and never reach here).
-            is_moving = isinstance(leg_type, str) and (
-                "Trip" in leg_type or "Transit" in leg_type
-            )
-
+            # Every trip row is sampled along its GPS track, whatever its
+            # label: the label says where the trip starts and ends relative to
+            # the vehicle's bases, not whether it has a track (each trip row is
+            # a window of the telematics feed). The endpoints are the fallback
+            # for a window without GPS samples. Charge / Stop rows were already
+            # skipped above and never reach here.
             origin_pt = _parse_point(ws.cell(row_idx, self._col_idx["origin"]).value)
             dest_pt = _parse_point(ws.cell(row_idx, self._col_idx["destination"]).value)
 
@@ -468,7 +465,6 @@ class FineGrainedWeatherPatcher:
                     "row": row_idx,
                     "t_s": t_s,
                     "t_e": t_e,
-                    "is_moving": bool(is_moving),
                     "origin": origin_pt,
                     "dest": dest_pt,
                 }
@@ -607,16 +603,13 @@ class FineGrainedWeatherPatcher:
 
     def _collect_samples_for_trip(self, task: dict) -> list[tuple[float, float, int]]:
         """
-        Collect the sample points for one trip.
+        Collect the sample points for one trip row.
 
-        Moving legs (labelled Trip / Transit): slice the [t_s, t_e] time window
-        from raw_telematics and downsample by ``min_sample_interval_s``. If there is
-        not a single point, fall back to the origin / dest endpoints.
-
-        The remaining trip rows (Outbound / Return / In House, lacking the
-        Trip/Transit label): use the origin / dest endpoints directly (if any).
-        Charge / Stop rows never reach here — they were already skipped by
-        ``is_trip_leg`` during the ``patch_file`` scan stage.
+        Slice the [t_s, t_e] time window from raw_telematics and downsample by
+        ``min_sample_interval_s``; if there is not a single point, fall back to
+        the origin / dest endpoints. The same for every trip row, whatever its
+        Leg Type. Charge / Stop rows never reach here — they were already skipped
+        by ``is_trip_leg`` during the ``patch_file`` scan stage.
         """
         t_s, t_e = task["t_s"], task["t_e"]
         origin = task["origin"]
@@ -624,7 +617,7 @@ class FineGrainedWeatherPatcher:
 
         samples: list[tuple[float, float, int]] = []
 
-        if task["is_moving"] and self._raw_index is not None:
+        if self._raw_index is not None:
             df = self._raw_index.slice_trip(t_s, t_e)
             df = _downsample_by_interval(df, self._min_interval)
             for _, r in df.iterrows():
