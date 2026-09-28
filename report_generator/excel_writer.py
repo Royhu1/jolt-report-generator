@@ -407,7 +407,11 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     """Add the ``Definitions`` worksheet (EV or diesel field glossary).
 
     A report holding a distance-only trip (among ``rows``) also explains that
-    energy source; every other report's glossary is the fixed text below."""
+    energy source; every other report's glossary is the fixed text below. The
+    ``Leg Type`` entry is the first diesel entry and the last EV one — where the
+    relabel patcher puts it in a report written before it existed (it rewrites
+    the old diesel entry in place and appends the EV one), so a patched report's
+    glossary is laid out as a new one's."""
     # ── Definitions worksheet ─────────────────────────────────────────────
     defs_ws = workbook.add_worksheet("Definitions")
     def_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
@@ -429,7 +433,6 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     else:
         # Electric report definitions
         def_texts = [
-            leg_type_definition(diesel=False),
             "SOC: State of Charge. The percentage of the battery capacity that is currently charged.",
             'Energy Source: "ac_dc" = charging energy from AC+DC telematics counters; '
             + '"total_energy" = discharge energy from total_electric_energy_used_plugged_in_included; '
@@ -491,6 +494,8 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
                 + "NO_ENERGY. Such a trip is no capacity donor and no EP statistic "
                 + "includes it."
             )
+        # Last, after every other entry (see the docstring).
+        def_texts.append(leg_type_definition(diesel=False))
     for dr, dt in enumerate(def_texts):
         defs_ws.write(dr, 0, dt, def_fmt)
     defs_ws.set_column(0, 0, max(len(t) for t in def_texts) * 0.9, def_fmt)

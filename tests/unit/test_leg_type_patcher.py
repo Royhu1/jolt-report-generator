@@ -4,7 +4,10 @@ Workbooks are written with the package's own writer from rows built inline, as
 the generator builds them before its second pass (provisional labels: "In
 Transit" trips and "<kind> Away" charges), Stop rows included. Every other cell
 of every sheet, and the Report sheet's styles and hyperlinks, must come out as
-they went in.
+they went in — except the Definitions sheet's Leg Type entry, which the patcher
+brings up to date. The "old" glossaries are those of a report written before the
+labels described the bases: an EV glossary without a Leg Type entry, a diesel one
+whose first entry defines only "In Transit" and "Stop".
 """
 
 from __future__ import annotations
@@ -24,6 +27,12 @@ from report_generator.row_builder import _insert_stop_rows
 from report_generator.xlsx_patch_common import save_workbook_atomically
 
 NAN = float("nan")
+#: The diesel glossary's Leg Type entry as reports were written before the labels
+#: described the bases.
+OLD_DIESEL_ENTRY = (
+    'Leg Type: "In Transit" = trip (green); "Stop" = parked/idling gap between '
+    "trips (white). Diesel vehicles have no charging events."
+)
 A = (52.0, -1.0)
 B = (52.5, -1.5)
 C = (52.2, -1.2)
@@ -134,6 +143,26 @@ def _leg_type_column(path):
     return [ws.cell(r, 2).value for r in range(2, ws.max_row + 1)]
 
 
+def _glossary(path):
+    ws = openpyxl.load_workbook(path)["Definitions"]
+    return [ws.cell(r, 1).value for r in range(1, ws.max_row + 1)]
+
+
+def _age_glossary(path, headers):
+    """Give a new workbook the glossary of a report written before the labels
+    described the bases: the EV entry (the last) removed, the diesel entry (the
+    first) set back to its old text."""
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Definitions"]
+    if headers is DIESEL_HEADERS:
+        assert ws.cell(1, 1).value == depots.leg_type_definition(diesel=True)
+        ws.cell(1, 1).value = OLD_DIESEL_ENTRY
+    else:
+        assert ws.cell(ws.max_row, 1).value == depots.leg_type_definition()
+        ws.delete_rows(ws.max_row)
+    wb.save(path)
+
+
 @pytest.mark.parametrize("headers", [HEADERS, DIESEL_HEADERS], ids=["ev", "diesel"])
 def test_only_the_leg_type_cells_change(tmp_path, headers):
     path = _write(tmp_path, _rows(headers, second_depot=True), headers)
@@ -205,7 +234,139 @@ def test_a_workbook_labelled_by_the_generator_is_left_unchanged(tmp_path):
     summary = leg_type_patcher.patch_workbook(path)
 
     assert summary["changed"] == 0 and summary["written"] is False
+    assert summary["definition"] == leg_type_patcher.DEFINITION_UNCHANGED
     assert path.read_bytes() == before
+
+
+# ── The glossary follows the labels ──────────────────────────────────────────
+
+
+def test_a_new_report_has_the_entry_last_for_ev_and_first_for_diesel(tmp_path):
+    ev = _write(tmp_path, _rows(HEADERS, days=2), HEADERS, "jolt_report_EV_1_1.xlsx")
+    dsl = _write(
+        tmp_path,
+        _rows(DIESEL_HEADERS, days=2),
+        DIESEL_HEADERS,
+        "jolt_report_D_1_1.xlsx",
+    )
+    assert _glossary(ev)[-1] == depots.leg_type_definition()
+    assert _glossary(dsl)[0] == depots.leg_type_definition(diesel=True)
+    assert sum(t.startswith("Leg Type:") for t in _glossary(ev)) == 1
+    assert sum(t.startswith("Leg Type:") for t in _glossary(dsl)) == 1
+
+
+@pytest.mark.parametrize("headers", [HEADERS, DIESEL_HEADERS], ids=["ev", "diesel"])
+def test_an_old_glossary_is_brought_up_to_date_and_nothing_else_moves(
+    tmp_path, headers
+):
+    path = _write(tmp_path, _rows(headers, second_depot=True), headers)
+    new_glossary = _glossary(path)
+    _age_glossary(path, headers)
+    old_glossary = _glossary(path)
+    values0, looks0, meta0 = _snapshot(path)
+
+    summary = leg_type_patcher.patch_workbook(path)
+
+    expected = (
+        leg_type_patcher.DEFINITION_UPDATED
+        if headers is DIESEL_HEADERS
+        else leg_type_patcher.DEFINITION_ADDED
+    )
+    assert summary["definition"] == expected and summary["written"] is True
+    # The glossary is now exactly a new report's: the one entry changed or
+    # appended, every other entry where and as it was.
+    assert _glossary(path) == new_glossary
+    values1, looks1, meta1 = _snapshot(path)
+    changed = {
+        k for k in set(values0) | set(values1) if values0.get(k) != values1.get(k)
+    }
+    definitions = {k for k in changed if k[0] == "Definitions"}
+    assert len(definitions) == 1
+    ((_, coord),) = definitions
+    if headers is DIESEL_HEADERS:
+        assert coord == "A1" and values0[("Definitions", "A1")] == OLD_DIESEL_ENTRY
+    else:
+        assert coord == f"A{len(old_glossary) + 1}"
+    assert all(
+        sheet == "Report" and c.startswith("B") for sheet, c in changed - definitions
+    )
+    assert looks1 == looks0 and meta1 == meta0
+
+
+def test_an_appended_entry_takes_the_style_of_the_entry_above(tmp_path):
+    path = _write(tmp_path, _rows(HEADERS, days=2), HEADERS)
+    _age_glossary(path, HEADERS)
+    leg_type_patcher.patch_workbook(path)
+    ws = openpyxl.load_workbook(path)["Definitions"]
+    last, above = ws.cell(ws.max_row, 1), ws.cell(ws.max_row - 1, 1)
+    assert last.value == depots.leg_type_definition()
+    assert (last.alignment.wrap_text, last.alignment.vertical) == (True, "top")
+    assert (last.alignment.wrap_text, last.alignment.vertical) == (
+        above.alignment.wrap_text,
+        above.alignment.vertical,
+    )
+
+
+@pytest.mark.parametrize("headers", [HEADERS, DIESEL_HEADERS], ids=["ev", "diesel"])
+def test_a_second_run_leaves_a_brought_up_to_date_glossary_alone(tmp_path, headers):
+    path = _write(tmp_path, _rows(headers, second_depot=True), headers)
+    _age_glossary(path, headers)
+    leg_type_patcher.patch_workbook(path)
+    before = path.read_bytes()
+    mtime = path.stat().st_mtime_ns
+
+    again = leg_type_patcher.patch_workbook(path)
+
+    assert again["definition"] == leg_type_patcher.DEFINITION_UNCHANGED
+    assert again["changed"] == 0 and again["written"] is False
+    assert path.read_bytes() == before and path.stat().st_mtime_ns == mtime
+
+
+def test_the_glossary_is_brought_up_to_date_when_no_label_changes(tmp_path):
+    rows = _rows(HEADERS, days=3)
+    depots.relabel_rows(rows)  # labels already current
+    path = _write(tmp_path, rows, HEADERS)
+    _age_glossary(path, HEADERS)
+    labels = _leg_type_column(path)
+
+    summary = leg_type_patcher.patch_workbook(path)
+
+    assert summary["changed"] == 0
+    assert summary["definition"] == leg_type_patcher.DEFINITION_ADDED
+    assert summary["written"] is True
+    assert _leg_type_column(path) == labels
+    assert _glossary(path)[-1] == depots.leg_type_definition()
+
+
+def test_a_dry_run_reports_the_glossary_and_writes_nothing(tmp_path):
+    path = _write(tmp_path, _rows(DIESEL_HEADERS, days=2), DIESEL_HEADERS)
+    _age_glossary(path, DIESEL_HEADERS)
+    before = path.read_bytes()
+
+    summary = leg_type_patcher.patch_workbook(path, dry_run=True)
+
+    assert summary["definition"] == leg_type_patcher.DEFINITION_UPDATED
+    assert summary["written"] is False
+    assert path.read_bytes() == before
+    assert _glossary(path)[0] == OLD_DIESEL_ENTRY
+
+
+def test_a_shorter_glossary_gets_the_entry_after_its_last_entry(tmp_path):
+    # A report of an older generator, whose glossary had fewer entries, and a
+    # sheet with a formatted but empty row below them.
+    path = _write(tmp_path, _rows(HEADERS, days=2), HEADERS)
+    wb = openpyxl.load_workbook(path)
+    ws = wb["Definitions"]
+    ws.delete_rows(4, ws.max_row - 3)
+    ws.cell(6, 1).value = ""
+    wb.save(path)
+
+    summary = leg_type_patcher.patch_workbook(path)
+
+    assert summary["definition"] == leg_type_patcher.DEFINITION_ADDED
+    glossary = _glossary(path)
+    assert glossary[3] == depots.leg_type_definition()
+    assert all(not v for v in glossary[4:])
 
 
 def test_an_ev_report_without_the_trailing_columns_is_relabelled(tmp_path):
@@ -225,6 +386,9 @@ def test_an_ev_report_without_the_trailing_columns_is_relabelled(tmp_path):
     summary = leg_type_patcher.patch_workbook(path)
 
     assert summary["layout"] == "ev"
+    # No Definitions sheet to hold the entry: none is created.
+    assert summary["definition"] == leg_type_patcher.DEFINITION_NO_SHEET
+    assert openpyxl.load_workbook(path).sheetnames == ["Report"]
     assert _leg_type_column(path)[:5] == [
         "Outbound",
         "Stop",
@@ -299,6 +463,7 @@ def test_the_cli_dry_run_prints_the_summary_and_writes_only_the_json(tmp_path, c
     assert path.read_bytes() == before
     printed = capsys.readouterr().out
     assert "would change" in printed and "base-to-base" in printed
+    assert "Leg Type definition unchanged" in printed
     assert "In Transit -> Outbound" in printed
     assert "bases, operator OPX: (52.0000, -1.0000) from overnight" in printed
     data = json.loads(out_json.read_text(encoding="utf-8"))

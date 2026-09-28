@@ -127,6 +127,8 @@ def test_an_ev_report_is_written_with_its_depot_labels(offline_report, alias):
     summary = leg_type_patcher.patch_workbook(path, dry_run=True)
 
     assert summary["changed"] == 0  # the generator already wrote these labels
+    assert summary["definition"] == leg_type_patcher.DEFINITION_UNCHANGED
+    assert summary["written"] is False
     assert summary["bases"]  # every EV fixture day yields a base
     trips = [
         lt for lt in _labels(path) if not _leg_is_charge(lt) and not _leg_is_stop(lt)
@@ -139,6 +141,7 @@ def test_a_diesel_report_is_written_with_its_depot_labels(offline_report):
     summary = leg_type_patcher.patch_workbook(path, dry_run=True)
     assert summary["layout"] == "diesel"
     assert summary["changed"] == 0
+    assert summary["definition"] == leg_type_patcher.DEFINITION_UNCHANGED
     assert summary["trips"] >= 1
 
 
