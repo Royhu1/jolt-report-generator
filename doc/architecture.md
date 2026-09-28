@@ -209,7 +209,7 @@ as a fallback.
 | `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan`, the `Energy Source` value of a distance-only trip (`DISTANCE_ONLY_SOURCE`) |
 | `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows`; a segment's provisional Leg Type (`_get_leg_type`, against a given home point) |
 | `depots.py` | the bases of a run per operator and the final Leg Type of every trip and charge row — `find_bases()`, `assign_leg_types()`, `relabel_rows()`; also the Definitions-sheet entry for the column (`leg_type_definition()`) |
-| `leg_type_patcher.py` | `patch_workbook()` + CLI: relabels the Leg Type column of an existing workbook from its own rows, in place (only the changed cells, atomic save), `--dry-run` |
+| `leg_type_patcher.py` | `patch_workbook()` + CLI: relabels the Leg Type column of an existing workbook from its own rows and brings the Definitions sheet's Leg Type entry up to date, in place (only the changed cells, atomic save), `--dry-run` |
 | `energy_correction.py` | `battery_elevation_energy_kwh()` — battery-side energy of a net elevation change (`ELEVATION_ENERGY_EFFICIENCY = 0.90`); shared by `row_builder` and `capacity` so both corrected-EP paths agree |
 | `ep_confidence.py` | per-row EP-confidence grading — `attach_ep_audits()` measures the diagnostics in the segmentation layer (it needs the counter anchors), `assess_ep_confidence()` is the single rule engine, `regrade_rows()` is the authoritative final pass |
 | `charts.py` | `CHART_SPECS_EV`/`CHART_SPECS_DIESEL` + `CHART_STYLE` (fixed-axis chart specs) |
@@ -748,7 +748,9 @@ and bases* below. Stop rows are synthesised by `_stop_row_from_neighbours` for g
 between trip/charge (carrying mass / cumulative distance / SOC endpoints from the
 previous segment; the three EP columns are NaN and the two EP-confidence cells blank),
 inserted **after** capacity correction and the final EP-confidence grading. The
-Definitions sheet's first entry explains the labels (`depots.leg_type_definition()`).
+Definitions sheet explains the labels (`depots.leg_type_definition()`): the last entry of
+the EV glossary (after the distance-only entry, when there is one), the first of the
+diesel one — where the relabel patcher puts it in a report written before it existed.
 
 ## Leg types and bases
 
@@ -833,18 +835,26 @@ that holds `Leg Type`, the start / end times and the origin / destination; `Dist
 python -m report_generator.leg_type_patcher <workbook | vehicle dir | tree dir> [--dry-run] [--json SUMMARY.json]
 ```
 
-Each workbook is relabelled from its own `Report` rows with `assign_leg_types`. Only the
-Leg Type cells whose label changes are written — every other cell, sheet, style, chart
-and hyperlink stays as the openpyxl round trip the other patchers use leaves it — the
+Each workbook is relabelled from its own `Report` rows with `assign_leg_types`, and its
+glossary follows: the Definitions sheet's `Leg Type` entry (the column-A cell starting
+`Leg Type:`) is set to `leg_type_definition()` for the workbook's layout — rewritten in
+place when it differs, as a diesel report's old entry does, or appended after the last
+entry, in that entry's style, when the report predates it, as an EV one does — so a
+patched report's glossary is laid out as a new report's. Only the Leg Type cells whose
+label changes and that one entry are written — every other cell, Definitions row
+included, and every sheet, style, chart and hyperlink stays as the openpyxl round trip
+the other patchers use leaves it; a workbook without a Definitions sheet gets none. The
 workbook is saved to a temporary file beside it and moved over it in one atomic replace,
 and a workbook that needs no change is not saved at all. EV and diesel layouts are both
 handled, including an EV report written before the trailing EP-confidence columns
 existed. A directory is searched for `jolt_report_*.xlsx`, or one level down;
 `*_finetuned*` reports and workbooks open in Excel (a `~$` lock file) are skipped.
-`--dry-run` prints, per workbook, the label changes, the bases per operator with position
-and support, and the base-to-base trips, and writes nothing; `--json` also writes the
-summaries (`patch_workbook()` returns the same dict). The Definitions sheet of a patched
-workbook keeps the glossary it was written with. Exit code 0 when every workbook was
+`--dry-run` prints, per workbook, the label changes, what the glossary entry needs
+(`definition`: `unchanged` / `updated` / `added` / `no sheet`), the bases per operator
+with position and support, and the base-to-base trips, and writes nothing; `--json` also
+writes the summaries (`patch_workbook()` returns the same dict). A report the current
+generator wrote needs neither, and a report written before this release, once patched,
+matches a new report of the same rows cell for cell. Exit code 0 when every workbook was
 processed, 1 when none was found or one was skipped.
 
 ## SRF Logger data channels

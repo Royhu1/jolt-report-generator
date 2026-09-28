@@ -188,10 +188,12 @@ python -m report_generator.leg_type_patcher <xlsx | vehicle dir | tree dir> [--d
 
 Recomputes the `Leg Type` column of reports already written, from each report's own
 rows, with the same rule the generator applies — so a report the current generator wrote
-comes out unchanged. It writes only the `Leg Type` cells whose label changes (nothing
-else in the workbook, weather cells included), saves atomically, needs no API key and
-makes no network call. `--dry-run` reports the label changes, the bases found per
-operator and the trips from one base to another, and writes nothing. Skips
+comes out unchanged. It writes only the `Leg Type` cells whose label changes and the
+Definitions sheet's `Leg Type` entry (rewritten, or appended to a report written before
+the entry existed) — nothing else in the workbook, weather cells included — saves
+atomically, needs no API key and makes no network call. `--dry-run` reports the label
+changes, the glossary entry, the bases found per operator and the trips from one base to
+another, and writes nothing. Skips
 `*_finetuned*` reports and any workbook open in Excel.
 
 ## Un-onboarded registrations

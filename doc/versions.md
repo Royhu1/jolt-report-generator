@@ -1168,16 +1168,20 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   entry for it — no other cell.** Data namespace: unchanged, `3.3.0/`. Verified offline:
   the five fixture workbooks (four EV, one diesel) built through
   `JOLTReportGenerator.generate_report` itself over a mocked SRF surface, under 3.9.0 and
-  3.10.0 — 8143 cells compared, 74 differ: 25 in the Report sheet's `Leg Type` column and
-  49 in the Definitions sheet (the EV glossary gains a first entry, which moves the
-  others down one row; the diesel entry is rewritten); every other cell, the row colours
-  and the capacity ledgers are identical. A five-day report of one vehicle's real feed
-  through the module CLI (fast mode, shipped configs) under both: 4844 cells, 20 differ
-  (8 `Leg Type`, 12 Definitions). A dry run of the relabel patcher over 129 existing
-  workbooks of 19 vehicles (43,836 trips, 8,927 charges) changes the label of 2,774 trips
-  (6.3 %) and 278 charges, and counts 159 trips from one base to another; it wrote
-  nothing (every workbook's SHA-256, size and modification time identical before and
-  after).
+  3.10.0 — 8143 cells compared, 30 differ: 25 in the Report sheet's `Leg Type` column and
+  5 in the Definitions sheet (each EV glossary gains its `Leg Type` entry as its last
+  row, the diesel entry is rewritten in place); every other cell, the row colours and the
+  capacity ledgers are identical. A five-day report of one vehicle's real feed through
+  the module CLI (fast mode, shipped configs) under both: 4844 cells, 9 differ (8
+  `Leg Type`, 1 Definitions). The 3.9.0 workbooks of both, relabelled by the 3.10.0
+  patcher, equal the 3.10.0 workbooks cell for cell (8143 and 4844 cells, 0 differ). A
+  dry run of the relabel patcher over 129 existing workbooks of 19 vehicles (43,836
+  trips, 8,927 charges) changes the label of 2,774 trips (6.3 %) and 278 charges, counts
+  159 trips from one base to another and brings every glossary's entry up to date (115 EV
+  appended, 14 diesel rewritten); it wrote nothing (every workbook's SHA-256, size and
+  modification time identical before and after). Patching five of them in copies wrote
+  697 cells — 692 `Leg Type`, one Definitions entry each — of 254,248, and a second run
+  wrote none.
 - **Why.** The generator took the position of the first charge of the run as the only
   home point, labelled each row as it was built — so every trip before that charge read
   `In Transit` — and afterwards only turned `Away` charges near it into `Home`, never a
@@ -1223,7 +1227,8 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   distance) / `Round Trip` (> 5 km); a start at a base only: `Outbound`; an end at a base
   only: `Return`; neither: `In Transit`. A trip from one base to a different one is
   labelled `Return` (it ends at a base) and counted (`LegTypeAssignment.base_to_base`,
-  logged per report); no new label was added for it. A charge keeps its kind (`AC` /
+  logged per report); no new label was added for it — a vehicle's second depot is a base
+  like the first, and a trip between the two ends at one. A charge keeps its kind (`AC` /
   `DC` / `AC/DC` / `Charge`) and reads `Home` at a base, else `Away`. The labels depend
   only on each row's kind, times, positions, distance and operator — never on its
   current label — so labelling twice changes nothing, and a report written by this
@@ -1238,10 +1243,17 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   EV report written before the EP-confidence pair existed), saving atomically
   (`xlsx_patch_common.save_workbook_atomically`: a temporary file beside it, then one
   `os.replace`); a workbook needing no change is not saved, `*_finetuned*` reports and
-  workbooks open in Excel are skipped. `--dry-run` reports, per workbook, the label
-  changes, the bases per operator with their position and support, and the base-to-base
-  trips, and writes nothing. The Definitions sheet of a patched workbook keeps the text
-  it was written with.
+  workbooks open in Excel are skipped. The glossary follows the labels: the Definitions
+  sheet's `Leg Type` entry is set to the current definition — rewritten in place when it
+  differs (a diesel report's old entry, which defined only `In Transit` and `Stop`), or
+  appended after the last entry, in its style, when the report predates it (an EV
+  report, whose glossary had no such entry) — and no other Definitions row is touched.
+  A new report has the entry in the same place (the first diesel entry; the last EV one,
+  after the distance-only entry when there is one), so a patched report's glossary is
+  laid out as a new one's. `--dry-run` reports, per workbook, the label changes, what the
+  glossary entry needs (`definition`: `unchanged` / `updated` / `added` / `no sheet`),
+  the bases per operator with their position and support, and the base-to-base trips,
+  and writes nothing.
 - **Fine-grained weather sampling.** The opt-in fine weather patcher sampled the GPS track
   only of rows labelled `In Transit` / `Round Trip` and took the two endpoints of
   `Outbound` / `Return` / `In House` rows; the label says where a trip starts and ends,
@@ -1273,13 +1285,19 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   trip-endpoint fallbacks, a run with no base and a charge-only run; diesel rows; every
   label rule; idempotence, independence from the current labels and the row order,
   values as read back from a workbook, unusable positions, Stop and blank rows; the
-  summary; the glossary entry), 15 of the patcher (only the Leg Type cells change — every
+  summary; the glossary entry), 24 of the patcher (only the Leg Type cells change — every
   cell of every sheet, the Report styles, hyperlinks, charts, sheet states compared — for
   EV and diesel; the expected labels; idempotence without a rewrite; a dry run leaving
   bytes and modification time alone; a generator-labelled workbook left unchanged; the
   narrower EV layout; an unreadable workbook refused; discovery; the CLI; the atomic
-  save), 8 of the fine weather sampling (four fail on 3.9.0), 7 integration tests driving
-  `generate_report` over the five fixtures to a written workbook that the patcher leaves
-  unchanged, and 2 import-contract entries.
+  save; and the glossary: where a new report has the entry, an old EV and an old diesel
+  glossary brought up to date with no other Definitions cell moving, the appended
+  entry's style, a second run that writes nothing, an entry brought up to date when no
+  label changes, a dry run, a shorter glossary, no Definitions sheet — twelve of them
+  fail on the patcher without it), 8 of the fine weather sampling (four fail on 3.9.0),
+  7 integration tests driving `generate_report` over the five fixtures to a written
+  workbook that the patcher leaves unchanged, and 2 import-contract entries. The 3.9.0
+  test of the distance-only glossary entry now checks that entry without assuming it is
+  the last one (the `Leg Type` entry is).
 
-  Full suite: **1637 passed, 4 skipped** (3.9.0: 1547 passed, 4 skipped).
+  Full suite: **1646 passed, 4 skipped** (3.9.0: 1547 passed, 4 skipped).
