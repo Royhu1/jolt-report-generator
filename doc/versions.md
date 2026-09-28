@@ -1161,3 +1161,106 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   move, and the day's report rows through `_finalize_rows`).
 
   Full suite: **1547 passed, 4 skipped** (3.8.1: 1451 passed, 4 skipped).
+
+## 3.9.1 — 2-point event-row SOC excursions, and genuine charge ends kept
+
+- **Report output: changes for the one vehicle on `scania_speed_02` (MK15BEV) and nowhere
+  else.** Data namespace: the package default (`DATA_NAMESPACE`) stays `3.3.0/`. Evidence:
+  - a replay of the segmentation over 7859 persisted raw telematics legs of the 16
+    configured EV vehicles (without Logger frames; 9148 charges, 41617 trips) is identical
+    under 3.9.0 and 3.9.1 in every leg but four of MK15BEV's — also for the two other
+    vehicles whose feed carries the same event rows and whose pipelines do not set the key;
+  - the four EV fixture workbooks built through `JOLTReportGenerator.generate_report`
+    itself over a mocked SRF surface match 3.9.0 in all 8066 cells, with identical
+    capacity ledgers, and so they do with `soc_event_spike_pct: 3` on every fixture
+    pipeline; every registered fixture regenerates its golden byte for byte;
+  - MK15BEV's two report intervals, 2026-07-21 – 2026-08-31 and 2026-09-01 – 2026-09-21,
+    built offline through `generate_report` from the vehicle's persisted raw telematics
+    and Logger frames with the shipped configs, under 3.9.0 and 3.9.1 from the same
+    inputs. The 3.9.0 build reproduces the reports and capacity-ledger entries 3.8.0
+    wrote from the same data in every segmentation, SOC, energy, mass, capacity and
+    Logger-link cell. Between the two releases every difference traces to five readings
+    the lower threshold blanks, directly or through the capacity correction (below); the
+    Graphs, GraphsData and Definitions sheets and the weather cells are identical, and a
+    second regeneration from the updated ledger reproduces both reports exactly.
+- **Why.** The event-row SOC filter ran at 3 points on this vehicle, whose ignition-on
+  rows report a SOC 2 to 5 points above the periodic readings on both sides. The 2-point
+  excursions stayed, and where a leg boundary sits on one the leg takes it as its SOC: a
+  charge that ended on a 69 % between periodic readings of 67 % reported 2 points
+  (8.3 kWh of `soc_estimate` energy) too much, and four Stop rows showed a 2-point rise
+  before a trip that started on one. Over the vehicle's persisted raw legs, 66 event-row
+  readings stand at least 2 points above both periodic neighbours (51 at least 3), every
+  one between periodic readings that agree with each other to within 2 points, with one
+  of them no more than 2.02 minutes away; no other reading of the feed qualifies at
+  2 points.
+- **`scania_speed_02`: `soc_event_spike_pct` 3.0 → 2.0.** It blanks exactly those 66
+  readings. Of the 15 it adds, five sit at a leg boundary and change the legs either side
+  (below); the other ten sit inside Stop rows, away from any leg's end, and change
+  nothing:
+  - the charge 2026-08-01 12:56:21 ended on the 69 % (14:07:23). With it gone nothing
+    separates it from the next charge — the SOC held at 67 % on charge for 37 minutes, the
+    charging status toggled, charging resumed at 14:12:18 — so the charge detector reads
+    one charge, as it reads any pause of up to `plateau_window_min` without a drop:
+    12:56:21 → 14:41:18, 29 → 100 %, +71 points, 296.995 kWh, where there were two
+    (29 → 69 %, 166.753 kWh; 67 → 100 %, 137.571 kWh) with a Stop row between. The
+    vehicle's charge rows go from 41 to 40 and their summed ΔSOC from 1580 to 1578 points;
+    every other charge keeps its start and end;
+  - four trips started on a 2-point excursion (2026-08-01 11:31:15, 2026-09-02 08:25:43,
+    2026-09-13 08:29:11, 2026-09-15 08:11:44): Start SOC 48 → 45, 36 → 33, 62 → 60 and
+    38 → 35 %, ΔSOC −19 → −16, −27 → −24, −14 → −12 and −13 → −10, the capacity their
+    ΔSOC implies 419.53 → 439.6, 399.1 → 449.0, 416.34 → 425.7 and 416.34 → 423.4 kWh.
+    Their energy, distance, EP and EP grade are unchanged, and the Stop row before each
+    loses its 2-point rise (to −1, −1, 0 and −1). No trip is added or lost (140);
+  - through the capacity correction, whose donors those trips are: the interval
+    capacities move from 421.9 to 422.3 kWh (90 donors) and from 414.9 to 420.1 kWh (32),
+    the vehicle's effective capacity from 420.1 to 421.7 kWh. The `soc_estimate` energy
+    of the other charges follows the time-local capacity: 20 in the first interval by
+    +0.34 to +0.50 %, all 12 in the second by +1.72 %; 35 more trips report a capacity
+    0.15 to 6.24 kWh higher. Charged energy over both intervals: 6616.050 → 6654.529 kWh;
+  - cells: the first report has two rows fewer (264 → 262; the later 143 legs renumbered)
+    and 97 differing cells in the rows present in both (14 on the changed legs, 83
+    through the capacity correction); the second, 63 (15 and 48).
+- **The filter keeps a genuine change of charge** (every pipeline that sets the key). At
+  a low threshold the both-sides rule also blanks genuine readings where the periodic
+  readings are sparse: a charge whose rise the event rows carry ends on a reading that
+  driving, or a parked drain, has taken the threshold below by the next periodic reading.
+  A read-only scan of every persisted raw leg with a `trigger_type` column found 45 such
+  readings at 11 charge ends on four vehicles at 2 points (18 at 3), none on this
+  vehicle. An event-row reading the rule would blank is now kept when **the level moved**
+  — its two periodic neighbours differ by at least its smaller excess — **and the level
+  held**: no valid reading of any kind within two minutes of it
+  (`segmentation.detection._SPIKE_CONTRADICTION_WINDOW`) lies the threshold or more below
+  it. The first test alone would also keep a stale reading sent right after a charge on a
+  feed with ten-minute periodic readings, where the periodic reading before it predates
+  the charge: on the three feeds of this vehicle type it keeps 11 readings at 2 points
+  (2 of them at 3), 10 of them stale; the second test blanks those 10, since a row sent
+  moments before or after each already reports the lower value. With both, the scan
+  keeps every one of the 45 genuine readings, blanks every reading of those three feeds
+  that the plain rule blanks at 3 points, and at 2 points differs from the plain rule on
+  them in one reading (an ignition-on reading 1 point above the charge end before it,
+  4 and 2 points above its periodic neighbours). Known limit: a top-up of about the
+  threshold that the vehicle uses again by the next periodic reading brings the SOC back
+  to where it was, which SOC values alone cannot tell from a stale reading; it is blanked
+  (two such top-ups in the scan, on vehicles whose pipelines do not set the key). On this
+  vehicle the exception changes nothing, at 3 points or at 2.
+- **Alternatives not taken.** A rolling-median despike can erase a genuine peak on a
+  sparse feed (40, 40, 60, 55, 50) and would judge periodic readings too. A time window
+  on the periodic neighbours alone depends on the feed's cadence: stale readings on a
+  ten-minute feed sit up to 5 minutes from the nearer periodic reading, while some
+  genuine charge ends sit only 3 to 4.5 minutes from it. A physical-rate bound needs each
+  vehicle's charge power and capacity.
+- **Periodic readings** stay the reference and are never blanked. The feed has one
+  periodic reading 2 points above both of its periodic neighbours (2026-08-12 11:01:50,
+  inside a Stop row, too small to be read as a charge), and one Stop row keeps a 2-point
+  rise that sits on the periodic readings themselves (2026-09-15 17:27:46: 58 % before a
+  parked spell, 60 % after it, no charging).
+- **Test suite.** New: 18 unit tests (the 2-point excursion blanked at 2 points and kept
+  at 3; the end of a charge followed by a parked drain, and by driving, kept; an
+  excursion right after a charge blanked; the two-minute window at both bounds; an
+  excursion that comes back blanked however far its neighbours; a reading that rose with
+  the charge kept at 2 points; the known limit; and through `run_segment_detection` the
+  parked phantom gone at 2 points, a charge ending on a 2-point excursion, at 3 and at 2
+  points, and a charge carried by event rows keeping its end); 1 fixture-driven
+  integration test (at 2 points the Scania fixture's charge is trimmed as at 3).
+
+  Full suite: **1566 passed, 4 skipped** (3.9.0: 1547 passed, 4 skipped).
