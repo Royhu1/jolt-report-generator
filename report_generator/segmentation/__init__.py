@@ -15,6 +15,8 @@ Module map:
   soc_detection       SOC-based charge / discharge segmentation
   speed_detection     speed-based trip / discharge segmentation
   mass_clustering     mass-cluster split / merge + energy-anchor recomputation
+  position_boundaries stays from the leg's positions; trip boundaries moved onto
+                      them (opt-in, ``position_trip_boundaries``)
   detection           run_segment_detection orchestrator (paints figures only via
                       an external ``figure_hook`` — see the note below)
 

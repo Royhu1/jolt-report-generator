@@ -54,6 +54,7 @@ CORE_MODULES = [
     "report_generator.segmentation.soc_detection",
     "report_generator.segmentation.speed_detection",
     "report_generator.segmentation.mass_clustering",
+    "report_generator.segmentation.position_boundaries",
     "report_generator.segmentation.detection",
     # weather infra
     "report_generator.weather_fetcher",

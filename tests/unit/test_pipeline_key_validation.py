@@ -1,10 +1,12 @@
 """Load-time validation of the pipeline keys with a checked value.
 
 ``load_pipeline_configs()`` — and so the import-time load of ``PIPELINE_CONFIGS``
-— checks the opt-in keys: ``soc_event_spike_pct`` at the top level of a pipeline
-(a positive number of SOC percentage points), and in its ``speed_params``
-``keep_trips_outside_cap_band`` and ``keep_odometer_confirmed_trips`` (``true`` /
-``false``) and ``min_confirmed_distance_km`` (a positive number of kilometres).
+— checks the opt-in keys: at the top level of a pipeline ``soc_event_spike_pct``
+(a positive number of SOC percentage points), ``position_trip_boundaries``
+(``true`` / ``false``) and ``position_params`` (an object of positive stay
+parameters), and in its ``speed_params`` ``keep_trips_outside_cap_band`` and
+``keep_odometer_confirmed_trips`` (``true`` / ``false``) and
+``min_confirmed_distance_km`` (a positive number of kilometres).
 A value of the wrong kind, or a key where it is not read, fails the load with a
 ``ValueError`` naming the pipeline and the key. Absent means off, and a pipeline
 without any of them loads exactly as written.
@@ -274,3 +276,81 @@ def test_the_import_time_load_rejects_a_malformed_key(tmp_path):
     assert proc.returncode != 0
     assert "ValueError" in proc.stderr
     assert "pipelines.json: ut_broken: soc_event_spike_pct" in proc.stderr
+
+
+# ── Trip boundaries from the positions: a switch and its stay parameters ─────
+
+
+@pytest.mark.parametrize("value", [True, False], ids=str)
+def test_the_position_switch_loads_as_a_flag(load, value):
+    pipeline = _pipeline({"position_trip_boundaries": value})
+    assert load(pipeline) == {"ut_speed": pipeline}
+
+
+def test_the_position_switch_with_its_parameters_loads(load):
+    pipeline = _pipeline(
+        {
+            "position_trip_boundaries": True,
+            "position_params": {
+                "stay_radius_km": 0.5,
+                "stay_min_minutes": 31,
+                "stay_max_km": 5,
+            },
+        }
+    )
+    assert load(pipeline)["ut_speed"] == pipeline
+
+
+@pytest.mark.parametrize(
+    "value", ["true", 1, 0, None, "yes"], ids=["text", "one", "zero", "null", "yes"]
+)
+def test_a_position_switch_that_is_not_a_flag_is_refused(load, value):
+    with pytest.raises(
+        ValueError,
+        match=r"pipelines\.json: ut_speed: position_trip_boundaries must be true or "
+        r"false",
+    ):
+        load(_pipeline({"position_trip_boundaries": value}))
+
+
+@pytest.mark.parametrize("key", ["stay_radius_km", "stay_min_minutes", "stay_max_km"])
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, "0.5", True, None, math.nan],
+    ids=["zero", "negative", "text", "flag", "null", "nan"],
+)
+def test_a_stay_parameter_that_is_not_a_positive_number_is_refused(load, key, value):
+    with pytest.raises(
+        ValueError,
+        match=rf"pipelines\.json: ut_speed: position_params\.{key} must be a "
+        r"positive number",
+    ):
+        load(_pipeline({"position_params": {key: value}}))
+
+
+def test_an_unknown_stay_parameter_is_refused(load):
+    with pytest.raises(ValueError, match=r"position_params\.radius is not a stay"):
+        load(_pipeline({"position_params": {"radius": 0.5}}))
+
+
+@pytest.mark.parametrize("value", [[0.5], 0.5, "stay"], ids=["list", "number", "text"])
+def test_stay_parameters_that_are_not_an_object_are_refused(load, value):
+    with pytest.raises(ValueError, match="position_params must be an object"):
+        load(_pipeline({"position_params": value}))
+
+
+def test_a_stay_parameter_at_the_top_level_is_refused(load):
+    # Only position_params is read: at the top level it would be ignored.
+    with pytest.raises(ValueError, match="stay_radius_km belongs in position_params"):
+        load(_pipeline({"stay_radius_km": 0.5}))
+
+
+@pytest.mark.parametrize("group", ["charge_params", "discharge_params", "speed_params"])
+@pytest.mark.parametrize("key", ["position_trip_boundaries", "position_params"])
+def test_a_position_key_inside_a_group_is_refused(load, group, key):
+    value = True if key == "position_trip_boundaries" else {"stay_radius_km": 0.5}
+    with pytest.raises(
+        ValueError,
+        match=f"{key} belongs at the top level of the pipeline, not in {group}",
+    ):
+        load(_pipeline(**{group: {key: value}}))

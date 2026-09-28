@@ -138,7 +138,12 @@ _PIPELINE_TOP_LEVEL_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
         _is_positive_number,
         "a positive number of SOC percentage points",
     ),
+    "position_trip_boundaries": (_is_flag, "true or false"),
 }
+
+#: The keys a pipeline's top-level ``position_params`` object may carry — the
+#: stay parameters of ``position_trip_boundaries`` — each a positive number.
+_POSITION_PARAMS_KEYS = ("stay_radius_km", "stay_min_minutes", "stay_max_km")
 _PIPELINE_SPEED_PARAMS_VALUES: dict[str, tuple[Callable[[object], bool], str]] = {
     "keep_trips_outside_cap_band": (_is_flag, "true or false"),
     "keep_odometer_confirmed_trips": (_is_flag, "true or false"),
@@ -182,10 +187,12 @@ def load_pipeline_configs() -> dict:
     The keys with a checked value are validated here, so a malformed one fails
     the load — at import too, which goes through this function — with a
     ``ValueError`` naming the pipeline and the key: ``soc_event_spike_pct``
-    (top level) that is not a positive number, ``keep_trips_outside_cap_band`` or
-    ``keep_odometer_confirmed_trips`` (in ``speed_params``) that is not ``true`` /
-    ``false``, ``min_confirmed_distance_km`` (in ``speed_params``) that is not a
-    positive number, or any of them in the wrong place, where it would be
+    (top level) that is not a positive number, ``position_trip_boundaries`` (top
+    level), ``keep_trips_outside_cap_band`` or ``keep_odometer_confirmed_trips``
+    (in ``speed_params``) that is not ``true`` / ``false``,
+    ``min_confirmed_distance_km`` (in ``speed_params``) that is not a positive
+    number, a ``position_params`` (top level) that is not an object of positive
+    stay parameters, or any of them in the wrong place, where it would be
     silently ignored or break a detector.
     """
     pipelines = _load_config_json("pipelines.json")
@@ -347,11 +354,12 @@ def _validate_pipeline_configs(pipelines: dict) -> None:
                     f"{where}: {key} belongs in speed_params, not at the top level "
                     "of the pipeline"
                 )
+        _validate_position_params(pipeline, where)
         for group in _PIPELINE_PARAM_GROUPS:
             params = pipeline.get(group)
             if not isinstance(params, dict):
                 continue
-            for key in _PIPELINE_TOP_LEVEL_VALUES:
+            for key in (*_PIPELINE_TOP_LEVEL_VALUES, "position_params"):
                 if key in params:
                     raise ValueError(
                         f"{where}: {key} belongs at the top level of the "
@@ -369,6 +377,37 @@ def _validate_pipeline_configs(pipelines: dict) -> None:
                         f"{where}: speed_params.{key} must be {kind}, "
                         f"not {params[key]!r}"
                     )
+
+
+def _validate_position_params(pipeline: dict, where: str) -> None:
+    """Raise ``ValueError`` for a malformed top-level ``position_params``.
+
+    The object may carry only :data:`_POSITION_PARAMS_KEYS`, each a positive
+    number; absent means the defaults. A stay parameter written straight at the
+    top level of the pipeline would be ignored, so it is refused too.
+    """
+    for key in _POSITION_PARAMS_KEYS:
+        if key in pipeline:
+            raise ValueError(
+                f"{where}: {key} belongs in position_params, not at the top level "
+                "of the pipeline"
+            )
+    if "position_params" not in pipeline:
+        return
+    params = pipeline["position_params"]
+    if not isinstance(params, dict):
+        raise ValueError(f"{where}: position_params must be an object, not {params!r}")
+    for key, value in params.items():
+        if key not in _POSITION_PARAMS_KEYS:
+            raise ValueError(
+                f"{where}: position_params.{key} is not a stay parameter "
+                f"(allowed: {', '.join(_POSITION_PARAMS_KEYS)})"
+            )
+        if not _is_positive_number(value):
+            raise ValueError(
+                f"{where}: position_params.{key} must be a positive number, "
+                f"not {value!r}"
+            )
 
 
 # ── Date-effective settings: validation and window parsing ───────────────────

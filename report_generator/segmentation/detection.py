@@ -43,6 +43,12 @@ from .mass_clustering import (
     merge_discharge_by_mass,
     split_discharge_by_mass,
 )
+from .position_boundaries import (
+    POSITION_PARAM_DEFAULTS,
+    position_params,
+    read_positions,
+    settle_trip_boundaries,
+)
 from .soc_detection import (
     find_charge_segments_by_soc,
     find_discharge_segments_by_soc,
@@ -118,7 +124,14 @@ def run_segment_detection(
     measured again beside a charge that cut them, else with their distance only
     (``energy_source`` ``"distance_only"``, no energy, never merged with a
     neighbour) — and its legs are handed the charges to cut at (see
-    :func:`find_discharge_segments_by_speed`).
+    :func:`find_discharge_segments_by_speed`). A pipeline with
+    ``position_trip_boundaries`` has its trips' boundaries moved onto the places
+    the leg's positions show the vehicle stayed at — a trip that ended before the
+    vehicle settled ends at its arrival, one that started after it had left
+    starts at its departure, and a stay seen on the way cuts it — each moved trip
+    measured again by the detector that found it
+    (:mod:`~report_generator.segmentation.position_boundaries`), before the anchor
+    ordering.
 
     Parameters
     ----------
@@ -265,6 +278,10 @@ def run_segment_detection(
             df_raw, _spike_pct, _pipeline_name, reg, suffix
         )
 
+    # Which detector found the leg's trips: the position pass measures a moved
+    # trip with that detector's floors.
+    speed_p: dict | None = None
+    trips_from_soc = branch == "soc"
     if branch == "soc":
         charge_segs = find_charge_segments_by_soc(df_raw, **c_params)
         discharge_segs = find_discharge_segments_by_soc(df_raw, **d_params)
@@ -359,6 +376,7 @@ def run_segment_detection(
         # (a leg with a trip kept on the odometer's word has yielded something)
         if not discharge_segs:
             discharge_segs = find_discharge_segments_by_soc(df_raw, **d_params)
+            trips_from_soc = True
 
     else:
         raise ValueError(
@@ -477,6 +495,27 @@ def run_segment_detection(
             )
         # 4. Recompute the energy anchors lost by the split (used for validation-figure annotations)
         _recompute_anchors(discharge_segs, df_raw, _tot_col, _mov_col)
+
+    # ── Trip boundaries from the positions (opt-in, per pipeline) ──────────
+    # On the trips as the split and merge left them, before the anchor
+    # ordering, the charge reconciliation, the diagnostics and the painter, so
+    # every caller gets the same boundaries. A moved trip is measured again by
+    # the detector that found it. Only a pipeline that sets the key does this.
+    if _pipeline_cfg.get("position_trip_boundaries") is True:
+        discharge_segs = _settle_on_positions(
+            df_raw,
+            charge_segs,
+            discharge_segs,
+            _trip_measurer(
+                df_raw,
+                charge_segs,
+                speed_p if not trips_from_soc else None,
+                d_params,
+            ),
+            _checked_position_params(_pipeline_cfg, _pipeline_name),
+            reg,
+            suffix,
+        )
 
     # ── Enforce non-overlapping anchors ────────────────────────────────────
     # Run on the final discharge segments (after split / merge / _recompute_anchors):
@@ -643,6 +682,143 @@ def _log_odometer_confirmed_trips(
             reg,
             suffix,
         )
+
+
+# =============================================================================
+# Trip boundaries from the positions (opt-in post-pass)
+# =============================================================================
+#: The keywords of the SOC detector's parameters that measuring a window reads:
+#: its floors and capacity band, the energy columns and the capacity seed.
+_SOC_MEASURE_KEYS = (
+    "min_soc_drop",
+    "min_energy_kwh",
+    "cap_lo",
+    "cap_hi",
+    "total_energy_col",
+    "moving_energy_col",
+    "nominal_kwh",
+)
+
+#: The SOC detector's own defaults for its floors, where a pipeline sets none.
+_SOC_FLOOR_DEFAULTS = {"min_soc_drop": 10.0, "min_energy_kwh": 2.0}
+
+
+def _checked_position_params(pipeline_cfg: dict, pipeline_name: str) -> dict:
+    """A pipeline's stay parameters, each a positive number (else ``ValueError``).
+
+    The loader refuses a malformed ``position_params`` in ``pipelines.json``;
+    one supplied any other way is refused here.
+    """
+    raw = pipeline_cfg.get("position_params") or {}
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"pipeline {pipeline_name!r}: position_params must be an object, "
+            f"not {raw!r}"
+        )
+    for key, value in raw.items():
+        if key not in POSITION_PARAM_DEFAULTS:
+            raise ValueError(
+                f"pipeline {pipeline_name!r}: position_params.{key} is not a stay "
+                f"parameter (allowed: {', '.join(POSITION_PARAM_DEFAULTS)})"
+            )
+        if not _is_positive_number(value):
+            raise ValueError(
+                f"pipeline {pipeline_name!r}: position_params.{key} must be a "
+                f"positive number, not {value!r}"
+            )
+    return position_params(pipeline_cfg)
+
+
+def _trip_measurer(
+    df_raw: pd.DataFrame,
+    charge_segs: list[dict],
+    speed_p: dict | None,
+    d_params: dict,
+) -> Callable:
+    """Measure a trip window as the detector that found the leg's trips would.
+
+    ``speed_p`` is the speed detector's parameters when it found them (its
+    floors, capacity band and opt-ins, the charges handed to it too), ``None``
+    when the SOC detector did — the SOC branch, or the speed branch's SOC
+    fallback — whose floors, capacity band and minimum trip distance then apply.
+    Either way the window is measured by the speed detector's window
+    measurement, handed the window as a precomputed trip: its SOC readings,
+    energy cascade, distance and position are the SOC detector's for the same
+    window. Returns ``measure(start, end) -> list[dict]``.
+    """
+    if speed_p is not None:
+        params = {k: v for k, v in speed_p.items() if k != "trips"}
+
+        def measure(start, end) -> list[dict]:
+            segs = find_discharge_segments_by_speed(
+                df_raw, **params, trips=[(start, end)], charge_segs=charge_segs
+            )
+            for seg in segs:
+                seg.pop(_ODOMETER_CONFIRMED_KEY, None)
+            return segs
+
+        return measure
+
+    params = dict(_SOC_FLOOR_DEFAULTS)
+    params.update({k: d_params[k] for k in _SOC_MEASURE_KEYS if k in d_params})
+    min_km = float(d_params.get("min_trip_distance_km", 0.0) or 0.0)
+
+    def measure(start, end) -> list[dict]:
+        segs = find_discharge_segments_by_speed(df_raw, **params, trips=[(start, end)])
+        if min_km > 0.0:
+            segs = [
+                s
+                for s in segs
+                if s.get("odo_start_km") is None
+                or s.get("odo_end_km") is None
+                or float(s["odo_end_km"]) - float(s["odo_start_km"]) >= min_km
+            ]
+        return segs
+
+    return measure
+
+
+def _settle_on_positions(
+    df_raw: pd.DataFrame,
+    charge_segs: list[dict],
+    discharge_segs: list[dict],
+    measure: Callable,
+    params: dict,
+    reg: str,
+    suffix: str,
+) -> list[dict]:
+    """Move one leg's trip boundaries onto the places its vehicle stayed at.
+
+    The stays come from the leg's positions and odometer
+    (:func:`~report_generator.segmentation.position_boundaries.read_positions`); each
+    trip then ends where the vehicle settles at the next place, starts where it
+    leaves the place before and is cut at a place it stays at on the way
+    (:func:`~report_generator.segmentation.position_boundaries.settle_trip_boundaries`).
+    A moved trip is measured again with ``measure``. The numbers of trips moved
+    and cut, of windows the floors dropped and of trips kept as they were are
+    logged per leg.
+    """
+    if not discharge_segs:
+        return discharge_segs
+    positions = read_positions(df_raw, **params)
+    if not positions.stays:
+        return discharge_segs
+    settled, counts = settle_trip_boundaries(
+        discharge_segs, charge_segs, positions, measure
+    )
+    if counts["moved"] or counts["kept"]:
+        logger.info(
+            "  position boundaries: %d trips moved onto the stays (%d cut at a stay "
+            "on the way, %d windows dropped by the floors), %d kept as they were "
+            "(%s %s)",
+            counts["moved"],
+            counts["cut"],
+            counts["dropped"],
+            counts["kept"],
+            reg,
+            suffix,
+        )
+    return settled
 
 
 # =============================================================================
