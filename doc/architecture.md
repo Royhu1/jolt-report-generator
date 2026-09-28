@@ -517,7 +517,7 @@ nothing.
 | top level | `max_extend_minutes` | float, default 5.0; the zero_speed extension cap |
 | top level | `mass_agg` | per-segment mass-aggregation method, default `"mean"`; one of `mean` / `median` / `iqr_median` / `mad_median` / `iqr_mean` / `mad_mean` / `mad_tw_mean` / `trimmed_mean`. Each = a fence (Tukey IQR / median±3·MAD / 20 % trim) then an estimator (median / mean / time-weighted mean). The value feeds the Excel `Vehicle Mass (kg)` column and is re-used by the external figure / fine-tuning tooling. Vehicle-level override wins |
 | top level | `reconcile_charge_boundaries` | bool, default `false` (only JSON `true` switches it on): clamp a charge that overlaps a trip to the trip's boundary — see *Segmentation algorithms*. For a pipeline whose trips come from a higher-rate signal than its charges (Logger-speed trips on a sparse telematics feed); a vehicle reaches it through its `pipeline`, including a `period_overrides` window's |
-| top level | `soc_event_spike_pct` | positive number of SOC percentage points; absent = off. Before any detector reads the SOC, blank the SOC of each event row (`trigger_type` other than `TIMER`) that exceeds both the nearest preceding and the nearest following valid `TIMER`-row SOC by at least this much — see *Segmentation algorithms*. For a feed whose event rows can carry a stale SOC; no effect on a feed without a `trigger_type` column |
+| top level | `soc_event_spike_pct` | positive number of SOC percentage points; absent = off. Before any detector reads the SOC, blank the SOC of each event row (`trigger_type` other than `TIMER`) that exceeds both the nearest preceding and the nearest following valid `TIMER`-row SOC by at least this much, unless it looks like a genuine change of charge (the level moved between those two readings and no reading within two minutes contradicts it) — see *Segmentation algorithms*. For a feed whose event rows can carry a stale SOC; no effect on a feed without a `trigger_type` column |
 | `charge_params` | `plateau_window_min` / `min_soc_rise` / `min_energy_kwh` | charge merge window + SOC-rise + energy thresholds |
 | `discharge_params` | `plateau_window_min` / `soc_rise_abort_pct` / `min_soc_drop` / `min_energy_kwh` | discharge merge window + SOC-recovery abort + drop/energy thresholds |
 | `speed_params` | `speed_threshold_kmh` / `min_stop_duration_min` / `min_trip_duration_min` / `min_soc_drop` / `min_energy_kwh` | speed-branch trip boundaries + lenient SOC/energy checks |
@@ -548,7 +548,8 @@ run_segment_detection
   ├─ _blank_replayed_odometer (pre-pass, every leg: blank the odometer readings that
   │                            cannot be the counter's own — a zero, a value sent again)
   ├─ _blank_event_soc_spikes (opt-in pre-pass, soc_event_spike_pct: blank the SOC of
-  │                           event rows standing out above the periodic readings)
+  │                           event rows standing out above the periodic readings
+  │                           that no genuine change of charge explains)
   ├─ branch=="soc":   find_charge_segments_by_soc + find_discharge_segments_by_soc
   ├─ branch=="speed": find_charge_segments_by_soc + find_discharge_segments_by_speed
   │                    (→ find_speed_trips; handed the charges, which the opt-in
@@ -593,17 +594,37 @@ run_segment_detection
   typically, after the vehicle has stood with the ignition off, the periodic rows have no
   SOC for a while and the ignition-on row then reports a value a few points above the SOC
   before and after it, which the charge detector reads as a short phantom charge worth
-  tens of kWh of `soc_estimate` energy. Before any detector reads the SOC, the pass sets
-  to NaN the SOC of each event row that exceeds **both** the nearest preceding and the
-  nearest following valid periodic SOC (valid: a number other than zero, which the
-  detectors read as missing) by at least the threshold. Periodic rows are the reference
-  and never change, and neither does an event row without a valid periodic reading on
-  both sides, one below its neighbours, or one without a parseable timestamp; neighbours
-  are found in time order. Blanking every event row's SOC would be wrong — it also
-  deletes real charges whose rise sits partly on event rows — while a genuine change of
-  charge persists into the next periodic reading, so the both-sides rule keeps it: a real
-  charge stays, one that ended on an excursion ends at the last reading that is not one,
-  and a charge with a short pause can then read as one session. The charges, the trips
+  tens of kWh of `soc_estimate` energy. A smaller excursion does its harm at a leg
+  boundary: a charge that ends on one reports too much energy, and the Stop row before a
+  trip that starts on one shows a rise that did not happen. Before any detector reads the
+  SOC, the pass sets to NaN the SOC of each event row that exceeds **both** the nearest
+  preceding and the nearest following valid periodic SOC (valid: a number other than
+  zero, which the detectors read as missing) by at least the threshold — unless the row
+  looks like a genuine change of charge:
+  - *the level moved*: the two periodic readings differ by at least the row's smaller
+    excess, instead of agreeing with each other better than with it; **and**
+  - *the level held*: no valid reading of any kind within two minutes of the row
+    (`_SPIKE_CONTRADICTION_WINDOW`, bounds included) lies the threshold or more below it.
+
+  The exception is for a feed whose periodic readings are sparse: a charge whose rise the
+  event rows carry can end on a reading that driving, or a parked drain, has taken the
+  threshold below by the next periodic reading, and without it that genuine end would be
+  blanked and the charge cut short. Each test alone is not enough. A stale reading sent
+  right after a charge also sits on a moved level (the periodic reading before it
+  predates the charge), but a row sent moments before or after it already reports the
+  lower value; and a stale reading on a feed with minutes between rows has nothing near
+  it to contradict it, but the SOC around it comes back to where it was. A change of 2
+  points in two minutes would take a rate above 60 % of the battery an hour. Known limit:
+  a top-up of about the threshold that the vehicle uses again by the next periodic
+  reading brings the SOC back to where it was, and SOC values alone cannot tell it from
+  a stale reading, so it is blanked. Periodic rows are the reference and never change,
+  and neither does an event row without a valid periodic reading on both sides, one below
+  its neighbours, or one without a parseable timestamp; neighbours are found in time
+  order. Blanking every event row's SOC would be wrong — it also deletes real charges
+  whose rise sits partly on event rows. A real charge stays, one that ended on an
+  excursion ends at the last reading that is not one, and a charge whose pause the
+  excursion alone interrupted then reads as one session (the charge detector merges rises
+  at most `plateau_window_min` apart with no drop between them). The charges, the trips
   (their SOC endpoints, and so the capacity their ΔSOC implies), the EP-confidence
   diagnostics and the painter all work on the cleaned copy; the caller's frame, and so the
   persisted raw telematics, keep the SOC as the feed sent it, and a renderer re-driving
