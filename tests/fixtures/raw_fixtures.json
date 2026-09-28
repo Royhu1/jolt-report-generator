@@ -18,5 +18,9 @@
   "EVSPD02": {
     "path": "raw/EVSPD02/raw_2025-11-25_0042.csv",
     "kind": "ev"
+  },
+  "EVSPD04": {
+    "path": "raw/EVSPD04/raw_2026-07-22_0002.csv",
+    "kind": "ev"
   }
 }

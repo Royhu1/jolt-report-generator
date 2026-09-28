@@ -13,7 +13,9 @@ fixtures/
 │   ├── EVSOC01/raw_2026-04-24_0000.csv      # EV, SOC branch (no energy counters)
 │   ├── EVMAD01/raw_2025-07-29_0000.csv      # EV, mad_tw_mean mass + merge_by_mass=false
 │   ├── DSL01/logger_2025-10-07_0000.csv     # diesel SRF logger leg (real J1939 names)
-│   └── EVSPD02/raw_2025-11-25_0042.csv      # EV, speed branch, SOC-only: a charge surfacing inside a trip
+│   ├── EVSPD02/raw_2025-11-25_0042.csv      # EV, speed branch, SOC-only: a charge surfacing inside a trip
+│   └── EVSPD04/raw_2026-07-22_0002.csv      # EV, speed pipeline falling back to the SOC: a frozen SOC, trips ending on the road in
+├── positions/               # anonymised telematics excerpts (not registered): trips from the Logger speed, for the position pass
 ├── raw_fixtures.json        # the registry: alias -> {"path", "kind": "ev" | "diesel"}
 ├── configs/                 # FROZEN vehicles.json / pipelines.json for the aliases
 ├── expected/                # golden segmentation snapshots (JSON), one per registered fixture
@@ -30,6 +32,7 @@ fixtures/
 | `EVSOC01` | 338 x 15 | a Mercedes eActros 600 on `mercedes_soc` | The **SOC branch**: a deliberately narrow feed with no AC/DC, no moving-energy and no total-energy-plugged-in column, so every leg resolves to `soc_estimate` and the capacity seed drives the energy. Also exercises the pipeline's `min_trip_distance_km` gate. |
 | `EVMAD01` | 430 x 62 | a Scania P-series BEV on `scania_speed_00` | The two non-default mass behaviours together: vehicle-level `mass_agg: "mad_tw_mean"` (beating the pipeline's `iqr_median`) and pipeline-level `merge_by_mass: false`. Discharge energy resolves to `moving_energy`, giving a third energy source. |
 | `EVSPD02` | 424 x 15 | a DAF XD on `daf_speed_00` | An **SOC-only feed on the speed branch** (no energy counter readings, SOC in 0.4-point steps), for `speed_params.keep_odometer_confirmed_trips`: the day's first trip is lost to the SOC floors because a charge taken while the telematics were silent surfaces after the vehicle has set off (a stale 27.6 %, then 95.6 %), and short hops with a frozen or barely falling SOC fail the 1-point floor. Its frozen pipeline has the key off, so its golden is the day as it is reported without it. |
+| `EVSPD04` | 248 x 15 | a Mercedes-Benz eActros 600 on `mercedes_logger_speed` | A **speed pipeline on a day without Logger data**, so the leg falls back to the SOC detector, for `position_trip_boundaries`: the SOC froze at 92 % at 03:05:08 while the vehicle drove on for 112 km (the first trip ends there, the drive becomes a 0 km Stop), and the trips into the depot end at the last SOC step, 0.9 and 1.6 km short of the charger. The frozen entry's `speed_col` names `wheel_based_speed`, which this feed does not carry (its speed column is `speed`), so the speed detector sees no speed on the leg. Its frozen pipeline has the key off, so its golden is the day as it is reported without it. |
 | `DSL01` | 544 x 20 | a DAF XF 450 diesel | The **diesel logger path**: `index_col=0` timestamps, real J1939 channel names (`LFC engine total fuel used`, `VDHR hr total vehicle distance`, `CVW gross combination vehicle weight`, Channel-7 weather, `EEC2`/`EBC1` pedals). Doubles as the source of realistic Logger channel data for the `LoggerPatcher` tests. |
 
 ## De-identification
@@ -127,7 +130,25 @@ diesel one (every trip's full metrics dict). The four originals:
 | `segments_EVMAD01.json` | All 3 charge + 10 discharge segments with `merge_by_mass: false`. |
 | `diesel_segments_DSL01.json` | The single diesel trip's full 20-key metrics dict. |
 
-Added since: `segments_EVSPD02.json` (2 charge + 5 discharge segments, the key off).
+Added since: `segments_EVSPD02.json` (2 charge + 5 discharge segments, the key off)
+and `segments_EVSPD04.json` (2 charge + 6 discharge segments, the key off).
+
+## Excerpts for the position pass (`positions/`)
+
+Two legs of the same vehicle as `EVSPD04`, whose trips come from the SRF Logger
+speed, which a registered fixture cannot carry: the tests hand the position pass the
+trips the upstream steps produced and the excerpt's fixes. They are cut to the hours
+that matter and to the six columns the pass and the window measurement read
+(`eventDatetime`, `speed`, `latitude`, `longitude`, `odometer`,
+`electricBatteryLevelPercent`), and de-identified with this tool's own `anonymise()`
+(the same rigid GPS transform with a random, unrecorded spin; no identity column is
+kept; the registration refused anywhere). They are not in `raw_fixtures.json`, have
+no golden and are read only by `integration/test_position_trip_boundaries_fixtures.py`.
+
+| File | Rows | What it pins |
+|------|------|--------------|
+| `EVPOS01_2026-08-26.csv` | 158 | A trip that bridged a depot visit (51 minutes seen standing) and ran on to a yard 1.6 km away: it ends at the depot arrival, and the yard move, below the pipeline's SOC floor, is left out. |
+| `EVPOS02_2026-09-22.csv` | 130 | A day's first trip that a mass split started 1.4 km out, where the new trailer mass was first read: it starts at the departure from the depot again. |
 
 Each file records the `alias` and the `source` fixture path so a golden can never
 drift onto a different input. Timestamps are ISO strings that keep their offset
