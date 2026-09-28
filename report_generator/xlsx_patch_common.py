@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
+import time
 from pathlib import Path
 
 import srf_client
@@ -53,6 +55,44 @@ def _to_timestamp(dt_val):
         return ts
     except Exception:
         return None
+
+
+#: How often, and how far apart, a refused replace of a saved workbook is retried
+#: (a synced folder can hold a file it is uploading for a moment).
+_REPLACE_ATTEMPTS = 5
+_REPLACE_DELAY_S = 0.2
+
+
+def save_workbook_atomically(wb, path) -> None:
+    """Save an openpyxl workbook over ``path`` atomically.
+
+    The workbook goes to a temporary file in the same directory
+    (``.<stem>.<random>.tmp.xlsx``), which then replaces ``path`` in one
+    ``os.replace`` — retried a few times while refused with ``PermissionError``
+    — so a save interrupted part-way leaves the previous workbook whole. On any
+    failure the temporary file is removed and the error raised.
+    """
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp.xlsx"
+    )
+    os.close(fd)
+    try:
+        wb.save(tmp_name)
+        for attempt in range(1, _REPLACE_ATTEMPTS + 1):
+            try:
+                os.replace(tmp_name, path)
+                return
+            except PermissionError:
+                if attempt == _REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(_REPLACE_DELAY_S)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def make_srf_client(
