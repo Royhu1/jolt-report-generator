@@ -862,5 +862,9 @@ def test_the_glossary_is_unchanged_without_a_distance_only_trip(configure, tmp_p
         )
     plain = _definitions(without)
     assert not any("distance_only" in text for text in plain)
-    assert _definitions(with_trip)[: len(plain)] == plain
-    assert len(_definitions(with_trip)) == len(plain) + 1
+    extended = _definitions(with_trip)
+    assert len(extended) == len(plain) + 1
+    # The one added entry defines the energy source; every other entry is the
+    # same, in the same order, and the Leg Type entry stays the last one.
+    assert [text for text in extended if "distance_only" not in text] == plain
+    assert extended[-1] == plain[-1] and plain[-1].startswith("Leg Type:")

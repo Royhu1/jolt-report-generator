@@ -486,8 +486,10 @@ def _diesel_seg_to_row(
     # Duration (fractional days for Excel [hh]:mm:ss format)
     dur_days = (pd.Timestamp(t_e) - pd.Timestamp(t_s)).total_seconds() / 86400.0
 
-    # Leg Type
-    leg_type = "In Transit"  # reuse the EV discharge Trip naming, directly comparable across vehicles
+    # Leg Type — provisional: the generator labels every trip against the run's
+    # bases once all rows are built (report_generator.depots.relabel_rows), with
+    # the EV trip labels, so the two fuel types read alike.
+    leg_type = "In Transit"
 
     row = (
         leg_type,  # Leg Type

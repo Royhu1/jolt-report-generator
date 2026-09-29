@@ -4,8 +4,10 @@ report_generator.row_builder
 Converts a segment dict into one Excel report row (``_seg_to_row``): URL
 builders, per-metric telematics helpers (mass / recuperation / propulsion /
 elevation / elevation- and kinetics-corrected EP), postcode reverse geocoding
-with an on-disk cache, home detection + leg-type classification, and Stop-row
-synthesis (``_stop_row_from_neighbours`` / ``_insert_stop_rows``).
+with an on-disk cache, the per-segment (provisional) leg-type classification,
+and Stop-row synthesis (``_stop_row_from_neighbours`` / ``_insert_stop_rows``).
+A report's final Leg Types come from :mod:`report_generator.depots`, once the
+whole run is segmented.
 
 Split out of report_builder.py, which re-exports these names for backward
 compatibility.
@@ -34,6 +36,7 @@ from report_generator.columns import (
     HEADERS,
     _row_col_index,
 )
+from report_generator.depots import HOME_DETECTION_KM, ROUND_TRIP_MIN_KM
 from report_generator.energy_correction import (
     ELEVATION_ENERGY_EFFICIENCY,
     GRAVITY_M_S2,
@@ -568,13 +571,10 @@ def _get_postcode(lat, lon, srf_data=None) -> str | None:
 
 
 # =============================================================================
-# Home detection & leg-type classification
+# Home detection & leg-type classification (provisional, per segment)
 # =============================================================================
-
-HOME_DETECTION_KM = 0.5
-ROUND_TRIP_MIN_KM = (
-    5.0  # trips starting AND ending at depot but longer than this → "Round Trip"
-)
+# HOME_DETECTION_KM / ROUND_TRIP_MIN_KM are defined in report_generator.depots,
+# which labels a whole run's rows; imported above and re-exported here.
 
 
 def _is_home(lat, lon, home_point) -> bool:
@@ -597,6 +597,13 @@ def _get_leg_type(mode: str, seg: dict, energy_ac, energy_dc, home_point) -> str
               "AC Away" / "DC Away" / "AC/DC Away" / "Charge Away"
       Trip:   "In House" / "Round Trip" / "Outbound" / "Return" / "In Transit"
               (Round Trip = circular delivery starting AND ending at depot, dist > ROUND_TRIP_MIN_KM)
+
+    This is the label of one segment against one given ``home_point`` — without
+    one, "<kind> Away" / "In Transit". The generator builds its rows without a
+    home point and labels the whole run afterwards against the bases found from
+    the run itself (:func:`report_generator.depots.relabel_rows`), which sets
+    the charge place and the trip label of every row; the charge kind chosen
+    here (AC / DC / AC/DC / Charge) is kept.
     """
     if mode == "charge":
         lat = seg.get("latitude")

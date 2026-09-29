@@ -172,6 +172,30 @@ energy (`Energy Source` `distance_only`: energy and every EP `=NA()`, no capacit
 anything computing energy or EP from the rows must skip it, as the NaN does for a
 safe-number reader.
 
+`Leg Type` says where a row starts and ends relative to the vehicle's bases (depots),
+which the generator finds from the report's own rows, per operator: trips `Outbound` /
+`Return` / `In House` / `Round Trip` / `In Transit`, charges `AC` / `DC` / `AC/DC` /
+`Charge` + `Home` / `Away`, gaps `Stop` (rules: `architecture.md`, *Leg types and
+bases*). Consumers that group rows by class should keep testing the class (a charge
+label starts with `AC` / `DC` / `Charge`; `Stop`; anything else is a trip), not a fixed
+list of strings.
+
+## Relabelling existing reports
+
+```bash
+python -m report_generator.leg_type_patcher <xlsx | vehicle dir | tree dir> [--dry-run] [--json FILE]
+```
+
+Recomputes the `Leg Type` column of reports already written, from each report's own
+rows, with the same rule the generator applies — so a report the current generator wrote
+comes out unchanged. It writes only the `Leg Type` cells whose label changes and the
+Definitions sheet's `Leg Type` entry (rewritten, or appended to a report written before
+the entry existed) — nothing else in the workbook, weather cells included — saves
+atomically, needs no API key and makes no network call. `--dry-run` reports the label
+changes, the glossary entry, the bases found per operator and the trips from one base to
+another, and writes nothing. Skips
+`*_finetuned*` reports and any workbook open in Excel.
+
 ## Un-onboarded registrations
 
 Any registration works — a `configs/vehicles.json` entry is not required. An
@@ -239,6 +263,9 @@ dependencies include neither matplotlib nor scikit-learn.
   it would move already-published historical numbers.
 - **SOC = 0 means "missing", not "flat battery".** Segmentation maps a telematics
   `SOC == 0` to NaN. Do not "correct" it.
+- **Leg Type labels belong to the report.** The bases are found from each report's own
+  rows, so the same trip can be labelled differently in a monthly and in a quarterly
+  report of the same days, and a trip from one depot to another reads `Return`.
 
 ## Exit codes
 

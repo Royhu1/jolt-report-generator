@@ -31,6 +31,7 @@ from report_generator.charts import (
     empty_note_extent,
 )
 from report_generator.columns import DISTANCE_ONLY_SOURCE, HEADERS, _is_nan
+from report_generator.depots import leg_type_definition
 
 logger = logging.getLogger(__name__)
 
@@ -406,15 +407,18 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
     """Add the ``Definitions`` worksheet (EV or diesel field glossary).
 
     A report holding a distance-only trip (among ``rows``) also explains that
-    energy source; every other report's glossary is the fixed text below."""
+    energy source; every other report's glossary is the fixed text below. The
+    ``Leg Type`` entry is the first diesel entry and the last EV one — where the
+    relabel patcher puts it in a report written before it existed (it rewrites
+    the old diesel entry in place and appends the EV one), so a patched report's
+    glossary is laid out as a new one's."""
     # ── Definitions worksheet ─────────────────────────────────────────────
     defs_ws = workbook.add_worksheet("Definitions")
     def_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
     if "Fuel Consumption (L/100km)" in headers:
         # Diesel report definitions
         def_texts = [
-            'Leg Type: "In Transit" = trip (green); "Stop" = parked/idling gap between trips (white). '
-            "Diesel vehicles have no charging events.",
+            leg_type_definition(diesel=True),
             "Vehicle Mass (kg): Gross combination vehicle weight (GCVW) read from the SRF Logger "
             '"CVW gross combination vehicle weight" channel at 1 Hz; reported value is the per-trip median.',
             "Fuel Used (L): Per-trip fuel consumption, computed from cumulative differences of the "
@@ -490,6 +494,8 @@ def _write_definitions_sheet(workbook, headers: tuple, rows=()) -> None:
                 + "NO_ENERGY. Such a trip is no capacity donor and no EP statistic "
                 + "includes it."
             )
+        # Last, after every other entry (see the docstring).
+        def_texts.append(leg_type_definition(diesel=False))
     for dr, dt in enumerate(def_texts):
         defs_ws.write(dr, 0, dt, def_fmt)
     defs_ws.set_column(0, 0, max(len(t) for t in def_texts) * 0.9, def_fmt)

@@ -78,6 +78,8 @@ report_generator/                  # the whole deliverable (REG + dates → xlsx
 ├── general_pipeline.py            # general fallback for un-onboarded regs: SRF-registration spacing resolution + runtime VEHICLE_CONFIG assembly (build_runtime_vehicle_config)
 ├── capacity.py                    # effective-capacity model: _correct_effective_capacity / _persist_effective_capacity + donor helpers
 ├── capacity_backfill.py           # rebuild the capacity ledger from existing xlsx (no SRF)
+├── depots.py                      # a run's bases (depots) per operator + the second-pass Leg Type of every trip / charge row
+├── leg_type_patcher.py            # relabel the Leg Type column of existing workbooks in place (+ CLI, --dry-run)
 ├── data_fetcher.py                # fetch_events() — SRF legs + charging events → ServerData
 ├── data_class.py                  # ServerData dataclass
 ├── operators.py                   # derive_leg_operator() — per-leg operator code (SRF cascade)
@@ -141,11 +143,13 @@ generate_report(reg, date_start, date_end)
   ├─ _preload_logger_channels(...)          → speed / mass / pedal channel frames (debug/EV)
   ├─ _preload_charger_meter(...)            → charger meter frame (debug figures)
   ├─ if diesel:  _process_diesel_legs(...)  → rows via process_diesel_leg() (DIESEL_HEADERS)
-  ├─ _process_fps_legs(...)                 → per FPS leg: run_segment_detection() → _seg_to_row() (HEADERS)
-  ├─ _reclassify_home_charging(...)         → relabel Away→Home charges within 0.5 km of the home point
+  ├─ _process_fps_legs(...)                 → per FPS leg: run_segment_detection() → _seg_to_row() (HEADERS),
+  │                                            provisional Leg Types ("In Transit" / "<kind> Away")
   ├─ _finalize_rows(...)                    → _correct_effective_capacity() (EV) + non-discharge EP scrub
   │                                            + per-period capacity + regrade_rows() (EP confidence)
   │                                            + _insert_stop_rows()
+  ├─ _assign_leg_types(...)                 → depots.relabel_rows(): the run's bases per operator, then the
+  │                                            Leg Type of every trip and charge row (EV and diesel)
   └─ _write_outputs(...)                    → _persist_effective_capacity() + _write_excel_report()
                                                + [EV,non-fast] ChargerPatcher → LoggerPatcher
                                                + [debug] raw artefacts only (no figures / inspect HTML)
@@ -203,7 +207,9 @@ as a fallback.
 | `capacity.py` | effective-capacity post-processing `_correct_effective_capacity()`, ledger persistence `_persist_effective_capacity()`, donor helpers; also re-exposed as `JOLTReportGenerator` staticmethods |
 | `diesel_pipeline.py` | `process_diesel_leg()` — SRFLOGGER_V1 channels → diesel rows |
 | `columns.py` | `HEADERS`/`DIESEL_HEADERS`, leg-type predicates, `_row_col_index`, `_is_nan`, the `Energy Source` value of a distance-only trip (`DISTANCE_ONLY_SOURCE`) |
-| `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows` |
+| `row_builder.py` | `_seg_to_row()` + metric helpers, URL builders, postcode geocode cache, `_stop_row_from_neighbours` / `_insert_stop_rows`; a segment's provisional Leg Type (`_get_leg_type`, against a given home point) |
+| `depots.py` | the bases of a run per operator and the final Leg Type of every trip and charge row — `find_bases()`, `assign_leg_types()`, `relabel_rows()`; also the Definitions-sheet entry for the column (`leg_type_definition()`) |
+| `leg_type_patcher.py` | `patch_workbook()` + CLI: relabels the Leg Type column of an existing workbook from its own rows and brings the Definitions sheet's Leg Type entry up to date, in place (only the changed cells, atomic save), `--dry-run` |
 | `energy_correction.py` | `battery_elevation_energy_kwh()` — battery-side energy of a net elevation change (`ELEVATION_ENERGY_EFFICIENCY = 0.90`); shared by `row_builder` and `capacity` so both corrected-EP paths agree |
 | `ep_confidence.py` | per-row EP-confidence grading — `attach_ep_audits()` measures the diagnostics in the segmentation layer (it needs the counter anchors), `assess_ep_confidence()` is the single rule engine, `regrade_rows()` is the authoritative final pass |
 | `charts.py` | `CHART_SPECS_EV`/`CHART_SPECS_DIESEL` + `CHART_STYLE` (fixed-axis chart specs) |
@@ -213,7 +219,7 @@ as a fallback.
 | `pedal_histogram.py` | EEC2 accelerator / EBC1 brake pedal histograms (discharge, distance > 10 km) |
 | `charger_patcher.py` / `logger_patcher.py` | EV post-write backfill of Charger Link / Logger Link + weather + mass |
 | `weather_patcher.py` / `weather_patch.py` / `weather_fetcher/` | coarse (default) + fine (opt-in) OpenWeather patching |
-| `xlsx_patch_common.py` | `make_srf_client()` (shared `SeparateBodyFileCache` client) + filename/cell/timestamp helpers |
+| `xlsx_patch_common.py` | `make_srf_client()` (shared `SeparateBodyFileCache` client) + filename/cell/timestamp helpers + `save_workbook_atomically()` |
 | `paths.py` | `get_cache_dir()` (env `JOLT_CACHE_DIR`) / `get_srf_api_root()` (env `SRF_API_ROOT`) / `default_report_root()` (the `DATA_NAMESPACE` output root, resolved at call time) |
 
 ## Environment variables
@@ -756,11 +762,121 @@ for EV, Fuel Consumption (0–60 L/100km) for diesel.
 
 **Definitions worksheet** — a column glossary.
 
-**Leg types**: `In Transit` / charge (`AC`/`DC`/`Mix`/`estimated`) / `Stop`. Stop rows are
-synthesised by `_stop_row_from_neighbours` for gaps > 60 s between trip/charge (carrying
-mass / cumulative distance / SOC endpoints from the previous segment; the three EP columns
-are NaN and the two EP-confidence cells blank), inserted **after** capacity correction and
-the final EP-confidence grading.
+**Leg types**: a trip is `Outbound` / `Return` / `In House` / `Round Trip` / `In Transit`,
+a charge `AC` / `DC` / `AC/DC` / `Charge` followed by `Home` or `Away`, and a gap is
+`Stop` — where each row starts and ends relative to the vehicle's bases, see *Leg types
+and bases* below. Stop rows are synthesised by `_stop_row_from_neighbours` for gaps > 60 s
+between trip/charge (carrying mass / cumulative distance / SOC endpoints from the
+previous segment; the three EP columns are NaN and the two EP-confidence cells blank),
+inserted **after** capacity correction and the final EP-confidence grading. The
+Definitions sheet explains the labels (`depots.leg_type_definition()`): the last entry of
+the EV glossary (after the distance-only entry, when there is one), the first of the
+diesel one — where the relabel patcher puts it in a report written before it existed.
+
+## Leg types and bases
+
+The row builder labels each segment on its own, before any base is known: trips
+`In Transit`, charges `<kind> Away` (`<kind>` — `AC` / `DC` / `AC/DC` / `Charge` — from the
+row's own AC/DC counters, kept from here on). Once the whole run is segmented and
+`_finalize_rows` has run (it reads only whether a row is a trip, a charge or a Stop), the
+generator calls `depots.relabel_rows(rows, headers)`, which finds the run's bases from the
+rows themselves and sets the Leg Type of every trip and charge row, EV and diesel alike.
+
+**Operators.** Bases are found separately for each operator in the run (the per-row
+`Operator`; a row without one belongs to the operator of the nearest row before it, else
+after it), so a round-robin vehicle that changes operator within a report is labelled
+against each operator's own depots. All the rows of an operator are pooled, including
+those of an operator the vehicle returns to later in the run.
+
+**Evidence, strongest first** (all thresholds are module constants in `depots.py`):
+
+1. *Overnight stays.* A stay is a stationary period between two consecutive trips of the
+   operator of at least `OVERNIGHT_STOP_MIN_H` = 6 h, plus the open stays before the
+   operator's first trip and after its last one. Its places are the earlier trip's
+   destination, the later trip's origin and the position of every charge of the operator
+   whose midpoint lies inside it. The places are clustered densest first
+   (`HOME_DETECTION_KM` = 0.5 km radius; support = number of distinct stays; the centre is
+   the cluster's medoid) and a cluster is a base when it holds at least
+   `MIN_BASE_NIGHTS` = 2 stays, at least `MIN_BASE_NIGHT_SHARE` = 0.2 of the operator's
+   stays and at least `MIN_BASE_NIGHTS_PER_DRIVING_DAY` = 0.1 stays per day on which the
+   operator's vehicle drove. Several clusters can qualify — a vehicle based at two depots
+   has two bases. A shorter rest across midnight is no evidence: on a double-shifted
+   vehicle it falls wherever the vehicle works at midnight, typically a customer site it
+   shuttles to; and the per-driving-day rate keeps the few long rests of such a vehicle
+   (mostly weekends) from promoting a customer site it is occasionally left at overnight.
+2. *Charge sites* — only when no site qualifies on overnight stays: the site with the most
+   charge sessions (ties: most energy), if it has at least `MIN_FALLBACK_SUPPORT` = 2.
+3. *Trip endpoints* — only when neither gives a base: the site most trip origins and
+   destinations fall at, if at least 2 do. Otherwise the operator has no base.
+
+A site where the vehicle only charges during the day is therefore no base when the run
+has overnight evidence, however much energy it delivers.
+
+**Labels.** A position is at a base when it lies within `HOME_DETECTION_KM` of the base
+centre (the nearest base when several are). Bases less than `BASE_GROUP_KM` = 3 km apart
+count as one place — sparse feeds often place a trip's first or last sample away from
+where the vehicle stood, which can leave two clusters of one depot a kilometre apart.
+A trip is `In House` (the same base group at both ends, `Distance (km)` ≤
+`ROUND_TRIP_MIN_KM` = 5 km or missing), `Round Trip` (the same, > 5 km), `Outbound`
+(starts at a base), `Return` (ends at one) or `In Transit` (neither); a trip from one base
+group to a different one is `Return` (it ends at a base) and is counted
+(`LegTypeAssignment.base_to_base`, logged). A charge is `<kind> Home` at a base, else
+`<kind> Away`. Stop rows and rows of no known kind are left as they are.
+
+**Properties.** The labels depend only on each row's kind, times, positions, distance and
+operator — never on its current label — so labelling twice changes nothing the second
+time, and a report the generator wrote is a fixed point of the relabel patcher (times are
+compared at whole seconds, so a row read back from its workbook gives the same result).
+The bases belong to the report: the same trip can be labelled differently in a monthly
+and in a quarterly report of the same days. A failure in the labelling costs the labels,
+not the report: the rows keep their provisional labels and a warning is logged.
+
+**Public API** (for a caller that assembles report rows itself — once per output report):
+
+```python
+from report_generator.depots import assign_leg_types, find_bases, relabel_rows
+
+result = relabel_rows(rows, headers)  # row lists in `headers` layout minus Leg Number
+result.bases         # {operator: (Base(lat, lon, evidence, nights, operator_nights,
+                     #               driving_days, charges, charge_kwh, group), ...)}
+result.changes       # Counter{(old label, new label): rows}
+result.base_to_base  # trips from one base group to another (labelled Return)
+result.summary()     # JSON-ready dict of the above (+ the overnight sites that fell short)
+```
+
+`assign_leg_types(rows, headers, bases=None)` computes the same without touching the
+rows (`labels[i]` is row `i`'s label); `find_bases(rows, headers)` returns only the bases.
+`headers` is `HEADERS`, `DIESEL_HEADERS` or any header tuple starting with `Leg Number`
+that holds `Leg Type`, the start / end times and the origin / destination; `Distance
+(km)`, `Operator` and `Energy Change (kWh)` are read when present.
+
+**Relabelling existing workbooks** (`leg_type_patcher.py`):
+
+```bash
+python -m report_generator.leg_type_patcher <workbook | vehicle dir | tree dir> [--dry-run] [--json SUMMARY.json]
+```
+
+Each workbook is relabelled from its own `Report` rows with `assign_leg_types`, and its
+glossary follows: the Definitions sheet's `Leg Type` entry (the column-A cell starting
+`Leg Type:`) is set to `leg_type_definition()` for the workbook's layout — rewritten in
+place when it differs, as a diesel report's old entry does, or appended after the last
+entry, in that entry's style, when the report predates it, as an EV one does — so a
+patched report's glossary is laid out as a new report's. Only the Leg Type cells whose
+label changes and that one entry are written — every other cell, Definitions row
+included, and every sheet, style, chart and hyperlink stays as the openpyxl round trip
+the other patchers use leaves it; a workbook without a Definitions sheet gets none. The
+workbook is saved to a temporary file beside it and moved over it in one atomic replace,
+and a workbook that needs no change is not saved at all. EV and diesel layouts are both
+handled, including an EV report written before the trailing EP-confidence columns
+existed. A directory is searched for `jolt_report_*.xlsx`, or one level down;
+`*_finetuned*` reports and workbooks open in Excel (a `~$` lock file) are skipped.
+`--dry-run` prints, per workbook, the label changes, what the glossary entry needs
+(`definition`: `unchanged` / `updated` / `added` / `no sheet`), the bases per operator
+with position and support, and the base-to-base trips, and writes nothing; `--json` also
+writes the summaries (`patch_workbook()` returns the same dict). A report the current
+generator wrote needs neither, and a report written before this release, once patched,
+matches a new report of the same rows cell for cell. Exit code 0 when every workbook was
+processed, 1 when none was found or one was skipped.
 
 ## SRF Logger data channels
 
@@ -797,6 +913,7 @@ columns would be all-NaN).
 | mass | telematics GCVW | Logger `CVW …` (three-level fallback: CVW trip median → prev-trip carry → `weight_class_t`×1000) |
 | temperature | Logger Ch 7 / OpenWeather | `AMB ambient air temperature` |
 | segmentation | speed + SOC check | `find_speed_trips()` only |
+| Leg Type | second pass against the run's bases (overnight stays, else charge sites, else trip endpoints) | the same second pass (overnight stays, else trip endpoints) |
 | charge events / capacity / patchers | detected / corrected / run | empty / skipped / skipped |
 
 Weather for diesel is aggregated at trip granularity directly by the pipeline from Logger
@@ -830,7 +947,10 @@ Example diesel entry:
 single dispatch point. **Coarse** (`WeatherPatcher`, default) averages each trip's origin +
 destination — quota-friendly, ~2 lookups/trip. **Fine** (`FineGrainedWeatherPatcher`,
 `--fine-grained`, opt-in) multi-samples in-trip GPS at 60 s with circular wind averaging
-(~17k calls/vehicle → OpenWeather 429 at fleet scale, so not the default). Both patch
+(~17k calls/vehicle → OpenWeather 429 at fleet scale, so not the default). It samples
+every trip row along its track, whatever its Leg Type (every trip row is a window of the
+telematics feed), and falls back to the two endpoints only for a window without GPS
+samples, so relabelling a report never changes how its trips are sampled. Both patch
 **driving rows only** (`is_trip_leg`), share `weather_fetcher/openweather.py`
 (`KeyManager`/`WeatherCache`/`WeatherFetcher`), and quantise the cache key to
 `f"{lat:.2f},{lon:.2f},{(dt//3600)*3600}"` (~1 km × 1 h). Coarse writes

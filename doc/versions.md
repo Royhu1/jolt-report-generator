@@ -1264,3 +1264,150 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   integration test (at 2 points the Scania fixture's charge is trimmed as at 3).
 
   Full suite: **1566 passed, 4 skipped** (3.9.0: 1547 passed, 4 skipped).
+
+## 3.10.0 — trips and charges labelled against the bases the run itself shows
+
+- **Report output: changes in the `Leg Type` column, and in the Definitions sheet's
+  entry for it — no other cell.** Data namespace: unchanged, `3.3.0/`. Verified offline:
+  the six fixture workbooks (five EV, one diesel) built through
+  `JOLTReportGenerator.generate_report` itself over a mocked SRF surface, under 3.9.1 and
+  3.10.0 — 11042 cells compared, 36 differ: 30 in the Report sheet's `Leg Type` column
+  and 6 in the Definitions sheet (each EV glossary gains its `Leg Type` entry as its last
+  row — after the distance-only entry in the fixture whose day has distance-only trips —
+  and the diesel entry is rewritten in place); every other cell, the row colours and the
+  capacity ledgers are identical. A five-day report of one vehicle's real feed through
+  the module CLI (fast mode, shipped configs, distance-only trips among its 65) under
+  both: 8079 cells, 37 differ (36 `Leg Type`, 1 Definitions). The 3.9.1 workbooks of
+  both, relabelled by the 3.10.0 patcher, equal the 3.10.0 workbooks cell for cell
+  (11042 and 8079 cells, 0 differ). A
+  dry run of the relabel patcher over 129 existing workbooks of 19 vehicles (43,836
+  trips, 8,927 charges) changes the label of 2,774 trips (6.3 %) and 278 charges, counts
+  159 trips from one base to another and brings every glossary's entry up to date (115 EV
+  appended, 14 diesel rewritten); it wrote nothing (every workbook's SHA-256, size and
+  modification time identical before and after). Patching five of them in copies wrote
+  697 cells — 692 `Leg Type`, one Definitions entry each — of 254,248, and a second run
+  wrote none.
+- **Why.** The generator took the position of the first charge of the run as the only
+  home point, labelled each row as it was built — so every trip before that charge read
+  `In Transit` — and afterwards only turned `Away` charges near it into `Home`, never a
+  trip and never the other way round. A first charge away from the depot (a one-off or an
+  opportunity charge), or a report spanning two operators of a shared vehicle, mislabelled
+  the whole report; a report whose every charge was at the depot could still read almost
+  entirely `In Transit` / `Charge Away`; a vehicle charging mostly at a second depot kept
+  the first; and diesel trips were all `In Transit`, although their overnight stops show
+  the depot clearly.
+- **The rule** (new module `report_generator.depots`). Once the whole run is segmented and
+  finalised, the generator finds the run's bases from its own rows and labels every trip
+  and charge row against them, EV and diesel alike (`_generator._assign_leg_types`, after
+  `_finalize_rows`, which reads only whether a row is a trip, a charge or a Stop). Bases
+  are found per operator — the per-row `Operator`; a blank one takes the neighbouring
+  rows' operator; all the rows of one operator are pooled, including an operator the
+  vehicle returns to later in the run. The evidence, strongest first:
+  1. *Overnight stays*: a rest of at least 6 h between two trips of the operator, and the
+     open stays before its first trip and after its last one; the places of a stay are the
+     two trips' ends and every charge of the operator inside it. They are clustered
+     densest first within 0.5 km (support = distinct stays; the centre is the cluster's
+     medoid), and a cluster is a base with at least 2 stays, at least a fifth of the
+     operator's stays and at least one stay per ten days on which its vehicle drove.
+     Several can qualify: a vehicle based at two depots has two bases. A rest under 6 h
+     across midnight is no evidence: on a double-shifted vehicle it lands wherever the
+     vehicle is working at midnight (in the fleet data, one vehicle's 1–4 h rests across
+     midnight fell at a customer site 163 times); and the per-day rate keeps the few long
+     rests of such a vehicle (mostly weekends) from making a loading site it is sometimes
+     left at overnight a base.
+  2. *Charge sites*, only when no site qualifies on overnight stays: the site with the most
+     charge sessions (ties: most energy), with at least 2.
+  3. *Trip endpoints*, only when neither gives a base: the most frequent trip origin /
+     destination site, with at least 2. Otherwise the operator has no base.
+
+  A site where the vehicle only charges during the day is therefore no base when the run
+  shows where it sleeps, however much it is used. The thresholds are the module's
+  constants (`OVERNIGHT_STOP_MIN_H`, `MIN_BASE_NIGHTS`, `MIN_BASE_NIGHT_SHARE`,
+  `MIN_BASE_NIGHTS_PER_DRIVING_DAY`, `MIN_FALLBACK_SUPPORT`, `HOME_DETECTION_KM`,
+  `BASE_GROUP_KM`, `ROUND_TRIP_MIN_KM`).
+- **The labels** keep the existing set, which every consumer enumerates. A position within
+  0.5 km of a base centre is at it; bases under 3 km apart count as one place (a sparse
+  feed can place a trip's first sample a kilometre from the vehicle's parking spot,
+  leaving two clusters of one depot). Same base at both ends: `In House` (≤ 5 km, or no
+  distance) / `Round Trip` (> 5 km); a start at a base only: `Outbound`; an end at a base
+  only: `Return`; neither: `In Transit`. A trip from one base to a different one is
+  labelled `Return` (it ends at a base) and counted (`LegTypeAssignment.base_to_base`,
+  logged per report); no new label was added for it — a vehicle's second depot is a base
+  like the first, and a trip between the two ends at one. A distance-only trip (`Energy
+  Source` `distance_only`) is a trip like any other here: its label comes from its
+  positions (in the fixture day that has them, they read `Outbound` and `In Transit`;
+  in the five-day report above, `In House`, `Outbound` and `Return`). A charge keeps its kind (`AC` /
+  `DC` / `AC/DC` / `Charge`) and reads `Home` at a base, else `Away`. The labels depend
+  only on each row's kind, times, positions, distance and operator — never on its
+  current label — so labelling twice changes nothing, and a report written by this
+  release is unchanged by the relabel patcher. The bases belong to the report: the same
+  trip can carry a different label in a monthly and in a quarterly report of the same
+  days. A labelling failure keeps the rows' provisional labels and logs a warning; it
+  never costs the report.
+- **The relabel patcher** (new module `report_generator.leg_type_patcher`):
+  `python -m report_generator.leg_type_patcher <workbook | vehicle dir | tree dir>
+  [--dry-run] [--json SUMMARY.json]` recomputes each workbook's `Leg Type` column from its
+  own rows and writes only the cells whose label changes, EV and diesel layouts (and an
+  EV report written before the EP-confidence pair existed), saving atomically
+  (`xlsx_patch_common.save_workbook_atomically`: a temporary file beside it, then one
+  `os.replace`); a workbook needing no change is not saved, `*_finetuned*` reports and
+  workbooks open in Excel are skipped. The glossary follows the labels: the Definitions
+  sheet's `Leg Type` entry is set to the current definition — rewritten in place when it
+  differs (a diesel report's old entry, which defined only `In Transit` and `Stop`), or
+  appended after the last entry, in its style, when the report predates it (an EV
+  report, whose glossary had no such entry) — and no other Definitions row is touched.
+  A new report has the entry in the same place (the first diesel entry; the last EV one,
+  after the distance-only entry when there is one), so a patched report's glossary is
+  laid out as a new one's. `--dry-run` reports, per workbook, the label changes, what the
+  glossary entry needs (`definition`: `unchanged` / `updated` / `added` / `no sheet`),
+  the bases per operator with their position and support, and the base-to-base trips,
+  and writes nothing.
+- **Fine-grained weather sampling.** The opt-in fine weather patcher sampled the GPS track
+  only of rows labelled `In Transit` / `Round Trip` and took the two endpoints of
+  `Outbound` / `Return` / `In House` rows; the label says where a trip starts and ends,
+  not whether it has a track. It now samples every trip row along its track and keeps the
+  endpoints as the fallback for a window without GPS samples. **Weather cells this can
+  change**: only when a workbook is (re-)patched with the fine patcher (`--fine-grained`)
+  — the weather cells it writes (empty ones, or every trip row's with `--force-repatch`)
+  of `Outbound` / `Return` / `In House` rows now come from the track. The default coarse
+  patcher, the generator and the relabel patcher write no weather cell because of this
+  release; a report is not re-sampled until someone re-patches it.
+- **Removed**: the first-charge home point and
+  `JOLTReportGenerator._reclassify_home_charging` (private). `_process_fps_legs` keeps its
+  signature and returns the home point it is given (the generator passes `None`, so the
+  per-segment labels are the provisional `In Transit` / `<kind> Away`). `_seg_to_row(…,
+  home_point)` and `row_builder._get_leg_type` / `_is_home` are unchanged for a caller
+  that labels one segment against a home point of its own; `HOME_DETECTION_KM` and
+  `ROUND_TRIP_MIN_KM` are defined in `depots` and re-exported where they were.
+- **Callers outside the package.** New names: `depots.find_bases`,
+  `depots.assign_leg_types`, `depots.relabel_rows` (with `LegTypeAssignment`, `Base`,
+  `trip_leg_type`, `charge_leg_type`, `describe_bases`, `leg_type_definition`),
+  `leg_type_patcher.patch_workbook` / `collect_workbooks` / `main`,
+  `xlsx_patch_common.save_workbook_atomically`. A caller that assembles report rows
+  itself calls `relabel_rows(rows, headers)` once per output report, after the rows are
+  final, to get the labels this release writes.
+- **Test suite.** New: 59 unit tests of the bases and labels (one depot; two depots and
+  the trip between them; two operators in one run; a first charge away from the depot; a
+  daytime charging site; an occasional overnight site; the share, the per-driving-day
+  rate and the 6 h threshold; a sparse second cluster of one depot; the charge-site and
+  trip-endpoint fallbacks, a run with no base and a charge-only run; diesel rows; every
+  label rule; idempotence, independence from the current labels and the row order,
+  values as read back from a workbook, unusable positions, Stop and blank rows; a
+  distance-only trip; the summary; the glossary entry), 24 of the patcher (only the Leg
+  Type cells change — every cell of every sheet, the Report styles, hyperlinks, charts,
+  sheet states compared — for EV and diesel; the expected labels; idempotence without a
+  rewrite; a dry run leaving bytes and modification time alone; a generator-labelled
+  workbook left unchanged; the narrower EV layout; an unreadable workbook refused;
+  discovery; the CLI; the atomic save; and the glossary: where a new report has the
+  entry, an old EV and an old diesel glossary brought up to date with no other
+  Definitions cell moving, the appended entry's style, a second run that writes nothing,
+  an entry brought up to date when no label changes, a dry run, a shorter glossary, no
+  Definitions sheet — twelve of them fail on the patcher without it), 8 of the fine
+  weather sampling (four fail on the previous release), 9 integration tests driving
+  `generate_report` over every registered fixture (six at this release) to a written
+  workbook that the patcher leaves unchanged — the distance-only trips of the fixture
+  that has them labelled as trips — and 2 import-contract entries. The 3.9.0 test of the
+  distance-only glossary entry now checks that entry without assuming it is the last one
+  (the `Leg Type` entry is).
+
+  Full suite: **1681 passed, 4 skipped** (3.9.1: 1579 passed, 4 skipped).
