@@ -886,7 +886,17 @@
     "altitude_col": "gnss_altitude",
     "min_cluster_gap_kg": 2000.0,
     "split_long_stops_min": 45,
-    "merge_by_mass": false
+    "merge_by_mass": false,
+    "period_overrides": [
+      {
+        "from": "2026-02-05",
+        "to": "2026-03-20",
+        "reason": "Sparse SOC (on most days fewer than 90 % of the rows carry one): keep the SOC and duration floors of daf_speed_00 before its re-tune, so that a short trip without an SOC reading of its own does not take the SOC change between the readings around it.",
+        "set": {
+          "pipeline": "daf_speed_01"
+        }
+      }
+    ]
   },
   "MK15BEV": {
     "srf_reg": "MK15 BEV",

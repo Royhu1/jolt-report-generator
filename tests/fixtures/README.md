@@ -13,7 +13,8 @@ fixtures/
 │   ├── EVSOC01/raw_2026-04-24_0000.csv      # EV, SOC branch (no energy counters)
 │   ├── EVMAD01/raw_2025-07-29_0000.csv      # EV, mad_tw_mean mass + merge_by_mass=false
 │   ├── DSL01/logger_2025-10-07_0000.csv     # diesel SRF logger leg (real J1939 names)
-│   └── EVSPD02/raw_2025-11-25_0042.csv      # EV, speed branch, SOC-only: a charge surfacing inside a trip
+│   ├── EVSPD02/raw_2025-11-25_0042.csv      # EV, speed branch, SOC-only: a charge surfacing inside a trip
+│   └── EVSPD03/raw_2026-05-01_0011.csv      # EV, speed branch, SOC-only: stop-start hops with odometer-confirmed trips on
 ├── raw_fixtures.json        # the registry: alias -> {"path", "kind": "ev" | "diesel"}
 ├── configs/                 # FROZEN vehicles.json / pipelines.json for the aliases
 ├── expected/                # golden segmentation snapshots (JSON), one per registered fixture
@@ -30,6 +31,7 @@ fixtures/
 | `EVSOC01` | 338 x 15 | a Mercedes eActros 600 on `mercedes_soc` | The **SOC branch**: a deliberately narrow feed with no AC/DC, no moving-energy and no total-energy-plugged-in column, so every leg resolves to `soc_estimate` and the capacity seed drives the energy. Also exercises the pipeline's `min_trip_distance_km` gate. |
 | `EVMAD01` | 430 x 62 | a Scania P-series BEV on `scania_speed_00` | The two non-default mass behaviours together: vehicle-level `mass_agg: "mad_tw_mean"` (beating the pipeline's `iqr_median`) and pipeline-level `merge_by_mass: false`. Discharge energy resolves to `moving_energy`, giving a third energy source. |
 | `EVSPD02` | 424 x 15 | a DAF XD on `daf_speed_00` | An **SOC-only feed on the speed branch** (no energy counter readings, SOC in 0.4-point steps), for `speed_params.keep_odometer_confirmed_trips`: the day's first trip is lost to the SOC floors because a charge taken while the telematics were silent surfaces after the vehicle has set off (a stale 27.6 %, then 95.6 %), and short hops with a frozen or barely falling SOC fail the 1-point floor. Its frozen pipeline has the key off, so its golden is the day as it is reported without it. |
+| `EVSPD03` | 435 x 15 | a DAF XD on `daf_speed_00` | A **stop-start delivery day on the SOC-only speed branch with `keep_odometer_confirmed_trips` on**, frozen with the pipeline's own values (`min_soc_drop` 0.75, `min_trip_duration_min` 1.0): hops of 0.5–4 km whose SOC falls by one 0.4-point step stay distance-only, those falling by two steps carry an energy, and one charge lies between them. Its golden is the day as the pipeline reports it. |
 | `DSL01` | 544 x 20 | a DAF XF 450 diesel | The **diesel logger path**: `index_col=0` timestamps, real J1939 channel names (`LFC engine total fuel used`, `VDHR hr total vehicle distance`, `CVW gross combination vehicle weight`, Channel-7 weather, `EEC2`/`EBC1` pedals). Doubles as the source of realistic Logger channel data for the `LoggerPatcher` tests. |
 
 ## De-identification
@@ -127,7 +129,8 @@ diesel one (every trip's full metrics dict). The four originals:
 | `segments_EVMAD01.json` | All 3 charge + 10 discharge segments with `merge_by_mass: false`. |
 | `diesel_segments_DSL01.json` | The single diesel trip's full 20-key metrics dict. |
 
-Added since: `segments_EVSPD02.json` (2 charge + 5 discharge segments, the key off).
+Added since: `segments_EVSPD02.json` (2 charge + 5 discharge segments, the key off);
+`segments_EVSPD03.json` (1 charge + 19 discharge segments, the key on).
 
 Each file records the `alias` and the `source` fixture path so a golden can never
 drift onto a different input. Timestamps are ISO strings that keep their offset
@@ -138,8 +141,9 @@ the same rules, so each measured diagnostic is pinned individually.
 
 Every registered fixture is checked against its golden by
 `tests/integration/test_registered_fixtures.py`, together with a consumer contract
-(required keys, chronology, sign convention, allowed energy sources), determinism,
-the de-identification rules above, and agreement between the registry, the files, the
+(required keys, chronology, sign convention, allowed energy sources; a distance-only
+trip carries an odometer distance but no energy and no capacity), determinism, the
+de-identification rules above, and agreement between the registry, the files, the
 frozen configs and the goldens. The four originals are additionally pinned by
 hand-written expectations in `test_segmentation_fixtures.py` and
 `test_diesel_pipeline_fixture.py`.

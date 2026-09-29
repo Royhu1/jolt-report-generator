@@ -8,8 +8,10 @@ suite's guard:
 
 * the segmentation of an EV fixture — every field of every charge and discharge
   segment — matches its golden, deterministically, and satisfies the contract a
-  consumer relies on (required keys, chronology, sign convention, allowed energy
-  sources); a diesel fixture's trips match their golden;
+  consumer relies on (``check_consumer_contract`` in the integration conftest:
+  required keys, chronology, sign convention, allowed energy sources, and a
+  distance-only trip held to what it promises instead — no energy, no capacity,
+  an odometer distance); a diesel fixture's trips match their golden;
 * the fixture is de-identified: no driver column, the vehicle identity is the
   alias, the alias is not a live registration, and no live registration appears
   in the file or its path in any spelling;
@@ -44,42 +46,10 @@ _MAKER_SPEC.loader.exec_module(_MAKER)
 
 _DRIVER_COLUMN = re.compile(r"^driver\d*_|\bdriver \d+\b", re.IGNORECASE)
 
-CHARGE_KEYS = {
-    "start_time",
-    "end_time",
-    "start_soc",
-    "end_soc",
-    "delta_soc_pct",
-    "delta_energy_kwh",
-    "energy_source",
-    "effective_capacity_kwh",
-    "charge_type",
-}
-DISCHARGE_KEYS = {
-    "start_time",
-    "end_time",
-    "start_soc",
-    "end_soc",
-    "delta_soc_pct",
-    "delta_energy_kwh",
-    "energy_source",
-    "effective_capacity_kwh",
-    "odo_start_km",
-    "odo_end_km",
-    "ep_audit",
-}
-CHARGE_SOURCES = {"ac_dc", "soc_estimate"}
-DISCHARGE_SOURCES = {"total_energy", "moving_energy", "soc_estimate"}
-
 
 def _golden_name(alias: str) -> str:
     kind = REGISTRY[alias]["kind"]
     return f"segments_{alias}.json" if kind == "ev" else f"diesel_segments_{alias}.json"
-
-
-def _naive(value) -> pd.Timestamp:
-    ts = pd.Timestamp(value)
-    return ts.tz_convert(None) if ts.tzinfo is not None else ts
 
 
 # ── The registry agrees with the tree ────────────────────────────────────────
@@ -162,22 +132,12 @@ def test_ev_segmentation_is_deterministic(alias, run_fixture_segmentation, seria
     assert serialise(first[1]) == serialise(second[1])
 
 
-def test_ev_segments_satisfy_the_consumer_contract(ev_segments):
+def test_ev_segments_satisfy_the_consumer_contract(
+    ev_segments, check_consumer_contract
+):
     alias, charge, discharge = ev_segments
     assert discharge, f"{alias}: a fixture with no trip guards nothing"
-    for seg in charge:
-        assert CHARGE_KEYS <= set(seg), CHARGE_KEYS - set(seg)
-        assert seg["energy_source"] in CHARGE_SOURCES
-        assert seg["delta_soc_pct"] > 0 and seg["delta_energy_kwh"] > 0
-    for seg in discharge:
-        assert DISCHARGE_KEYS <= set(seg), DISCHARGE_KEYS - set(seg)
-        assert seg["energy_source"] in DISCHARGE_SOURCES
-        assert seg["delta_soc_pct"] < 0 and seg["delta_energy_kwh"] < 0
-    for group in (charge, discharge):
-        starts = [_naive(s["start_time"]) for s in group]
-        assert starts == sorted(starts)
-        for seg in group:
-            assert _naive(seg["start_time"]) <= _naive(seg["end_time"])
+    check_consumer_contract(charge, discharge)
 
 
 # ── Diesel fixtures ──────────────────────────────────────────────────────────
