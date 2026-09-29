@@ -6,8 +6,12 @@
   before it (48 %, 12:24:27) and 3 points above the one after it (50 %,
   12:34:27). With a 3-point threshold that reading is blanked and the charge
   ends one row earlier, at the ignition-on row's 52 %; the event rows carrying
-  the rise itself (51 %, 52 %) stay. EVSPD01's feed also carries the column but
-  has no such excursion, and EVSOC01's has no column at all: both unchanged.
+  the rise itself (51 %, 52 %) stay. At 2 points the 52 % also stands 2 above
+  the reading after it, but the periodic readings either side differ by as
+  much and nothing within two minutes of it reads 50 % or less: it rose with
+  the charge and stays, so the charge ends where it does at 3 points. EVSPD01's
+  feed also carries the column but has no such excursion, and EVSOC01's has no
+  column at all: both unchanged.
 * ``keep_trips_outside_cap_band`` (``speed_params``): EVSPD01 has one speed
   trip the capacity band drops — 17:04:25 -> 17:13:28, ΔSOC -1 %, 22.4 kWh on the
   total-energy counter, an implied 2240.6 kWh against a 1080 kWh ceiling. With
@@ -118,6 +122,18 @@ def test_the_filter_trims_the_excursion_ending_a_real_charge(
         "delta_soc_pct",
         "delta_energy_kwh",
     }
+
+
+def test_at_two_points_the_filter_trims_the_excursion_as_at_three(
+    with_keys, run_fixture_segmentation, serialise
+):
+    with_keys("EVMAD01", spike_pct=3)
+    charge_3, discharge_3 = run_fixture_segmentation("EVMAD01")
+    with_keys("EVMAD01", spike_pct=2)
+    charge_2, discharge_2 = run_fixture_segmentation("EVMAD01")
+    assert serialise(charge_2) == serialise(charge_3)
+    assert serialise(discharge_2) == serialise(discharge_3)
+    assert serialise(charge_2)[1]["end_time"] == "2025-07-29T12:27:26+00:00"
 
 
 @pytest.mark.parametrize("alias", ["EVSPD01", "EVSOC01"])

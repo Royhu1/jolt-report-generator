@@ -63,6 +63,12 @@ _TIMER_TRIGGER = "TIMER"
 #: SOC filter cannot act because the feed has no ``trigger_type`` column.
 _NO_TRIGGER_TYPE_LOGGED: set[str] = set()
 
+#: How far either side of an event row the event-row SOC filter looks for a
+#: reading, of any kind, that contradicts the row's SOC (see
+#: :func:`_blank_event_soc_spikes`). A genuine change of 2 points in two minutes
+#: would take a rate above 60 % of the battery an hour.
+_SPIKE_CONTRADICTION_WINDOW = pd.Timedelta(minutes=2)
+
 
 # =============================================================================
 # Wrapper: run charge + discharge segmentation together + invoke the figure_hook seam
@@ -931,14 +937,26 @@ def _blank_event_soc_spikes(
     An event row's SOC is set to NaN when it exceeds **both** the nearest
     preceding and the nearest following valid periodic SOC — valid meaning a
     number other than zero, which the detectors read as missing — by at least
-    ``spike_pct`` points. A genuine change of charge persists into the next
-    periodic reading, so a rise carried by event rows during a charge is kept,
-    and so is an event row whose excursion is below the threshold on either
-    side. Periodic rows are the reference and are never changed; neither is an
-    event row without a valid periodic reading on both sides (at a leg's ends),
-    one below its neighbours, or one without a parseable timestamp. The
-    neighbours are found in time order, whatever the frame's row order. A row
-    with no ``trigger_type`` counts as an event row.
+    ``spike_pct`` points, unless the row looks like a genuine change of charge.
+    A genuine change usually persists into the next periodic reading, so a rise
+    carried by event rows during a charge is kept, and so is an event row whose
+    excursion is below the threshold on either side. Where the periodic
+    readings are sparse it need not: a charge whose rise the event rows carry
+    can end on a reading that driving, or a parked drain, has taken the
+    threshold below by the next periodic reading. Such a reading is kept when
+    both of these hold: the periodic readings either side of it differ by at
+    least its smaller excess (the level moved between them instead of coming
+    back to where it was), and no valid reading of any kind within
+    ``_SPIKE_CONTRADICTION_WINDOW`` of it lies ``spike_pct`` or more below it
+    (its level held). A stale reading fails one or the other: the SOC around
+    it comes back to where it was, or a row sent moments before or after it
+    already reports the lower value.
+
+    Periodic rows are the reference and are never changed; neither is an event
+    row without a valid periodic reading on both sides (at a leg's ends), one
+    below its neighbours, or one without a parseable timestamp. The neighbours
+    are found in time order, whatever the frame's row order. A row with no
+    ``trigger_type`` counts as an event row.
 
     Returns ``(frame, n_blanked)``. ``frame`` is a copy with those SOC cells set
     to NaN, or ``df_raw`` itself — never modified — when nothing is blanked or
@@ -964,11 +982,20 @@ def _blank_event_soc_spikes(
     periodic_soc = rows["soc"].where(rows["periodic"])
     before = periodic_soc.ffill()
     after = periodic_soc.bfill()
-    spike = (
-        ~rows["periodic"]
-        & (rows["soc"] - before >= spike_pct)
-        & (rows["soc"] - after >= spike_pct)
+    over_before = rows["soc"] - before
+    over_after = rows["soc"] - after
+    stands_out = (
+        ~rows["periodic"] & (over_before >= spike_pct) & (over_after >= spike_pct)
     )
+    # A reading on a level that moved between its periodic neighbours — they
+    # differ by at least its smaller excess — is a genuine change of charge
+    # unless a reading close to it in time says otherwise.
+    genuine = stands_out & (
+        (before - after).abs() >= np.minimum(over_before, over_after)
+    )
+    if genuine.any():
+        genuine &= ~_contradicted_nearby(rows, genuine, spike_pct)
+    spike = stands_out & ~genuine
     positions = rows.index[spike.to_numpy()].to_numpy()
     if len(positions) == 0:
         return df_raw, 0
@@ -981,3 +1008,28 @@ def _blank_event_soc_spikes(
     column.iloc[positions] = np.nan
     cleaned[SOC_COL] = column
     return cleaned, int(len(positions))
+
+
+def _contradicted_nearby(
+    rows: pd.DataFrame, which: pd.Series, spike_pct: float
+) -> pd.Series:
+    """Whether a reading close in time lies ``spike_pct`` or more below each row.
+
+    ``rows`` are :func:`_blank_event_soc_spikes`' time-ordered readings (``time``
+    tz-aware, ``soc`` NaN where missing); ``which`` marks the rows to judge. A
+    row is contradicted when a valid reading of any kind — periodic or event —
+    taken within ``_SPIKE_CONTRADICTION_WINDOW`` of it, either side and the
+    bounds included, has a SOC at least ``spike_pct`` below its own. Returns a
+    boolean Series on ``rows``' index, ``False`` for every row not judged.
+    """
+    valid = rows[rows["soc"].notna()]
+    times = pd.DatetimeIndex(valid["time"])
+    levels = valid["soc"].to_numpy(dtype=float)
+    contradicted = pd.Series(False, index=rows.index)
+    for label in rows.index[which.to_numpy()]:
+        when = rows.at[label, "time"]
+        first = times.searchsorted(when - _SPIKE_CONTRADICTION_WINDOW, side="left")
+        last = times.searchsorted(when + _SPIKE_CONTRADICTION_WINDOW, side="right")
+        near = levels[first:last]
+        contradicted.at[label] = bool((rows.at[label, "soc"] - near >= spike_pct).any())
+    return contradicted

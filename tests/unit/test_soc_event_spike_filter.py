@@ -7,8 +7,12 @@ both sides of it — typically the ignition-on row after the vehicle has stood w
 the ignition off — and the charge detector reads that excursion as a phantom
 charge. ``_blank_event_soc_spikes`` sets such a reading to NaN when it exceeds
 both the nearest preceding and the nearest following valid periodic SOC by at
-least the threshold; a pipeline turns it on with ``soc_event_spike_pct`` and
-``run_segment_detection`` applies it before any detector reads the SOC.
+least the threshold — unless it looks like a genuine change of charge: the
+periodic readings either side differ by at least its smaller excess and no
+reading within two minutes of it lies the threshold below it, as at the end of a
+charge the event rows carried, followed by driving or a parked drain. A pipeline
+turns the filter on with ``soc_event_spike_pct`` and ``run_segment_detection``
+applies it before any detector reads the SOC.
 """
 
 from __future__ import annotations
@@ -209,6 +213,154 @@ def test_a_row_without_a_timestamp_is_left_alone():
     cleaned, n = _blank_event_soc_spikes(frame, 3.0)
     assert n == 1  # the ignition-on excursion only
     assert pd.to_numeric(cleaned[SOC], errors="coerce").iloc[-1] == 90
+
+
+# ── A genuine change of charge ───────────────────────────────────────────────
+
+# The excursion a charge ends on at 2 points: 69 between periodic readings of 67,
+# the rows either side of it already back at 67.
+TWO_POINT_EXCURSION = [
+    ("14:05:55", "TIMER", 67),
+    ("14:06:55", "TIMER", NAN),
+    ("14:07:23", "IGNITION_ON", 69),
+    ("14:08:06", "IGNITION_OFF", 67),
+    ("14:08:46", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 67),
+    ("14:09:46", "TIMER", 67),
+]
+
+# A charge whose rise the event rows carry while the periodic rows are silent,
+# ending at 60; the vehicle then stands, the battery drains, and the first
+# periodic reading after the ignition-on is 57.
+CHARGE_THEN_PARKED_DRAIN = [
+    ("08:00:00", "TIMER", 40),
+    ("09:00:00", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 45),
+    ("09:30:00", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 50),
+    ("10:00:00", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 55),
+    ("10:30:00", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 60),
+    ("16:00:00", "IGNITION_ON", 57),
+    ("16:01:00", "TIMER", 57),
+]
+
+# A charge carried by event rows ends at 84 and the vehicle drives off: the level
+# holds for minutes, falling to 82 by the next periodic reading.
+CHARGE_THEN_DRIVE_OFF = [
+    ("10:40:19", "TIMER", 59),
+    ("11:12:13", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 84),
+    ("11:12:19", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 84),
+    ("11:13:39", "MOVEMENT", 84),
+    ("11:14:02", "DRIVER_1_WORKING_STATE_CHANGED", 84),
+    ("11:16:02", "DRIVER_1_WORKING_STATE_CHANGED", 83),
+    ("11:20:19", "TIMER", 82),
+]
+
+
+@pytest.mark.parametrize("threshold, expected", [(2.0, ["14:07:23"]), (3.0, [])])
+def test_a_two_point_excursion_is_blanked_at_two_points_only(threshold, expected):
+    frame = _frame(TWO_POINT_EXCURSION)
+    cleaned, n = _blank_event_soc_spikes(frame, threshold)
+    assert n == len(expected)
+    assert _blanked(frame, cleaned) == expected
+
+
+@pytest.mark.parametrize("threshold", [2.0, 3.0])
+def test_the_end_of_a_charge_followed_by_a_parked_drain_is_kept(threshold):
+    # 60 is 20 above the 40 before and 3 above the 57 after, but the two
+    # periodic readings differ by 17 (the level moved: a charge) and nothing
+    # within two minutes of 10:30 reads 58 or less (the level held).
+    frame = _frame(CHARGE_THEN_PARKED_DRAIN)
+    cleaned, n = _blank_event_soc_spikes(frame, threshold)
+    assert n == 0
+    assert cleaned is frame
+
+
+def test_the_end_of_a_charge_followed_by_driving_is_kept():
+    # 84 is 25 above the 59 before and 2 above the 82 after; the 83 two minutes
+    # after the last 84 is only 1 below it.
+    assert _blank_event_soc_spikes(_frame(CHARGE_THEN_DRIVE_OFF), 2.0)[1] == 0
+
+
+def test_an_excursion_right_after_a_charge_is_blanked():
+    # The level moved between the periodic readings (45 -> 52, a charge), but the
+    # row a second before the 54 already reads 52: the 54 is stale.
+    rows = [
+        ("11:04:56", "TIMER", 45),
+        ("11:13:45", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 52),
+        ("11:14:32", "DRIVER_2_WORKING_STATE_CHANGED", 52),
+        ("11:14:33", "TRAILER_CONNECTED", 54),
+        ("11:14:56", "TIMER", 52),
+    ]
+    frame = _frame(rows)
+    cleaned, n = _blank_event_soc_spikes(frame, 2.0)
+    assert n == 1
+    assert _blanked(frame, cleaned) == ["11:14:33"]
+    # Only 2 above the reading after it: below a 3-point threshold.
+    assert _blank_event_soc_spikes(frame, 3.0)[1] == 0
+
+
+@pytest.mark.parametrize(
+    "contradiction_at, expected",
+    [("10:32:00", 1), ("10:32:01", 0), ("10:28:00", 1), ("10:27:59", 0)],
+    ids=["2-min-after", "just-beyond-after", "2-min-before", "just-beyond-before"],
+)
+def test_a_reading_contradicts_within_two_minutes_either_side_bounds_included(
+    contradiction_at, expected
+):
+    # The 60 of a charge followed by a drain, and one reading 2 below it at
+    # ``contradiction_at``: within the window the 60 is stale, outside it the
+    # level held.
+    rows = [
+        ("08:00:00", "TIMER", 40),
+        ("10:30:00", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 60),
+        (contradiction_at, "IGNITION_ON", 58),
+        ("16:00:00", "TIMER", 57),
+    ]
+    assert _blank_event_soc_spikes(_frame(rows), 2.0)[1] == expected
+
+
+@pytest.mark.parametrize("threshold", [2.0, 3.0])
+def test_an_excursion_that_comes_back_is_blanked_however_far_its_neighbours(
+    threshold,
+):
+    # Ten-minute periodic readings and no other row near the ignition-on: the
+    # 70 has nothing within two minutes to contradict it, but the SOC comes back
+    # to 67, where it was.
+    rows = [
+        ("10:43:12", "TIMER", 67),
+        ("10:47:19", "IGNITION_ON", 70),
+        ("10:53:12", "TIMER", 67),
+    ]
+    assert _blank_event_soc_spikes(_frame(rows), threshold)[1] == 1
+
+
+def test_at_two_points_the_reading_that_rose_with_the_charge_stays():
+    # The end of a genuine charge at 2 points: 52 is 4 above the 48 before and 2
+    # above the 50 after, on a level that moved by 2 between them, and nothing
+    # within two minutes of it reads 50 or less, so it stays; 53 is 5 and 3
+    # above them, which are closer to each other than to it: blanked.
+    rows = [
+        ("12:24:27", "TIMER", 48),
+        ("12:26:29", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 51),
+        ("12:27:26", "IGNITION_ON", 52),
+        ("12:27:27", "TRAILER_CONNECTED", 53),
+        ("12:34:27", "TIMER", 50),
+    ]
+    frame = _frame(rows)
+    cleaned, n = _blank_event_soc_spikes(frame, 2.0)
+    assert n == 1
+    assert _blanked(frame, cleaned) == ["12:27:27"]
+
+
+def test_a_top_up_that_falls_back_to_the_level_before_it_reads_as_an_excursion():
+    # Known limit: SOC values alone cannot tell a 2-point top-up that the
+    # vehicle has used again by the next periodic reading from a stale reading;
+    # the level comes back to where it was, so both readings at 100 go.
+    rows = [
+        ("12:03:06", "TIMER", 98),
+        ("12:06:31", "BATTERY_PACK_CHARGING_STATUS_CHANGE", 100),
+        ("12:14:44", "IGNITION_ON", 100),
+        ("12:40:00", "TIMER", 98),
+    ]
+    assert _blank_event_soc_spikes(_frame(rows), 2.0)[1] == 2
 
 
 # ── How the rows are read ────────────────────────────────────────────────────
@@ -437,3 +589,66 @@ def test_an_invalid_threshold_supplied_at_run_time_is_refused(configure):
     configure(-1)
     with pytest.raises(ValueError, match="ut_spike_soc.*soc_event_spike_pct"):
         _segment(_leg())
+
+
+def test_at_two_points_the_phantom_charge_is_gone_too(configure):
+    configure(2)
+    assert _segment(_leg()) == ([], [])
+
+
+def _clock(start: str, minutes: int) -> str:
+    """``start`` (hh:mm:ss) plus ``minutes``, as hh:mm:ss."""
+    when = pd.Timestamp(f"{DAY}T{start}") + pd.Timedelta(minutes=minutes)
+    return when.strftime("%H:%M:%S")
+
+
+def _charge_ending_on_the_excursion() -> pd.DataFrame:
+    """A charge from 29 % to 67 % on periodic rows, 2 points a minute; the SOC
+    stays at 67 % until the ignition-on row reports 69 %, and the rows after it
+    read 67 % again."""
+    rows = [(_clock("13:00:55", m), "TIMER", 29 + 2 * m) for m in range(20)]
+    rows += [(_clock("13:00:55", m), "TIMER", 67) for m in range(20, 65)]
+    rows += TWO_POINT_EXCURSION
+    rows += [(_clock("14:10:46", m), "TIMER", 67) for m in range(10)]
+    return _frame(rows)
+
+
+@pytest.mark.parametrize(
+    "spike_pct, end_time, end_soc",
+    [(3, "14:07:23", 69.0), (2, "13:19:55", 67.0)],
+    ids=["3-points-ends-on-the-excursion", "2-points-ends-on-the-charge"],
+)
+def test_a_charge_ending_on_a_two_point_excursion(
+    configure, spike_pct, end_time, end_soc
+):
+    configure(spike_pct)
+    charges, discharges = _segment(_charge_ending_on_the_excursion())
+    assert discharges == []
+    assert len(charges) == 1
+    charge = charges[0]
+    assert (charge["start_soc"], charge["end_soc"]) == (29.0, end_soc)
+    assert charge["end_time"] == pd.Timestamp(f"{DAY}T{end_time}Z")
+    assert charge["energy_source"] == "soc_estimate"
+    # ΔSOC x the vehicle's 417 kWh: 40 points on the excursion, 38 without it.
+    assert charge["delta_soc_pct"] == end_soc - 29.0
+    assert charge["delta_energy_kwh"] == pytest.approx((end_soc - 29.0) / 100 * 417.0)
+
+
+def test_a_charge_carried_by_event_rows_keeps_its_end_despite_a_parked_drain(
+    configure,
+):
+    # At 2 points the rule alone would blank the 60 that ends the charge — 3
+    # above the periodic reading after the parked spell — and cut the charge
+    # short at 55; the level moved and held, so the whole 40 -> 60 stays.
+    configure(2)
+    rows = [(_clock("07:54:00", m), "TIMER", 40) for m in range(6)]
+    rows += CHARGE_THEN_PARKED_DRAIN
+    rows += [(_clock("16:02:00", m), "TIMER", 57) for m in range(8)]
+    charges, discharges = _segment(_frame(rows))
+    assert discharges == []  # the 3-point drain is below the 5-point floor
+    assert len(charges) == 1
+    charge = charges[0]
+    assert (charge["start_soc"], charge["end_soc"]) == (40.0, 60.0)
+    assert charge["start_time"] == pd.Timestamp(f"{DAY}T08:00:00Z")
+    assert charge["end_time"] == pd.Timestamp(f"{DAY}T10:30:00Z")
+    assert charge["delta_energy_kwh"] == pytest.approx(0.20 * 417.0)
