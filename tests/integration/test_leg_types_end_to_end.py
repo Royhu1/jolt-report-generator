@@ -16,6 +16,7 @@ import json
 import logging
 import shutil
 import types
+from pathlib import Path
 
 import openpyxl
 import pandas as pd
@@ -25,9 +26,14 @@ from report_generator import _generator as gen_mod
 from report_generator import leg_type_patcher
 from report_generator.columns import _leg_is_charge, _leg_is_stop
 from report_generator.data_class import ServerData
+from report_generator.depots import TRIP_LEG_TYPES
 from report_generator.segmentation import constants
 
-EV_ALIASES = ("EVSPD01", "EVSOC01", "EVMAD01", "EVSPD02")
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+REGISTRY = json.loads((FIXTURES / "raw_fixtures.json").read_text(encoding="utf-8"))
+#: Every registered fixture, so a fixture added later is covered too.
+EV_ALIASES = sorted(a for a, e in REGISTRY.items() if e["kind"] == "ev")
+DIESEL_ALIASES = sorted(a for a, e in REGISTRY.items() if e["kind"] == "diesel")
 
 
 @pytest.fixture
@@ -80,7 +86,7 @@ def offline_report(monkeypatch, tmp_path, frozen_configs, raw_fixture_path):
 
     def run(alias):
         src = raw_fixture_path(alias)
-        if alias.startswith("DSL"):
+        if REGISTRY[alias]["kind"] == "diesel":
             frame = pd.read_csv(src, index_col=0)
             frame.index = pd.to_datetime(frame.index, utc=True)
             current["leg"] = types.SimpleNamespace(
@@ -136,13 +142,41 @@ def test_an_ev_report_is_written_with_its_depot_labels(offline_report, alias):
     assert {"Outbound", "Return"} <= set(trips)
 
 
-def test_a_diesel_report_is_written_with_its_depot_labels(offline_report):
-    path = offline_report("DSL01")
+@pytest.mark.parametrize("alias", DIESEL_ALIASES)
+def test_a_diesel_report_is_written_with_its_depot_labels(offline_report, alias):
+    path = offline_report(alias)
     summary = leg_type_patcher.patch_workbook(path, dry_run=True)
     assert summary["layout"] == "diesel"
     assert summary["changed"] == 0
     assert summary["definition"] == leg_type_patcher.DEFINITION_UNCHANGED
     assert summary["trips"] >= 1
+
+
+#: The fixtures whose day holds trips kept on the odometer's word (their golden
+#: has distance-only segments).
+DISTANCE_ONLY_ALIASES = sorted(
+    a
+    for a in EV_ALIASES
+    if '"distance_only"'
+    in (FIXTURES / "expected" / f"segments_{a}.json").read_text(encoding="utf-8")
+)
+
+
+def _column(path, name):
+    ws = openpyxl.load_workbook(path)["Report"]
+    col = [c.value for c in ws[1]].index(name) + 1
+    return [ws.cell(r, col).value for r in range(2, ws.max_row + 1)]
+
+
+@pytest.mark.parametrize("alias", DISTANCE_ONLY_ALIASES)
+def test_distance_only_trips_are_labelled_like_any_other_trip(offline_report, alias):
+    # Those rows carry no energy, but a depot label like every other trip, from
+    # their positions alone.
+    path = offline_report(alias)
+    pairs = list(zip(_column(path, "Leg Type"), _column(path, "Energy Source")))
+    labels = {lt for lt, src in pairs if src == "distance_only"}
+    assert labels and labels <= set(TRIP_LEG_TYPES)
+    assert labels - {"In Transit"}, "at least one is labelled against the base"
 
 
 def test_the_bases_are_logged(offline_report, caplog):

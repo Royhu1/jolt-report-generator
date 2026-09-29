@@ -602,6 +602,23 @@ def test_values_as_read_back_from_a_workbook_give_the_same_labels():
     assert labels(rows) != expected  # the provisional labels did change
 
 
+def test_a_distance_only_trip_is_labelled_like_any_other_trip():
+    # A trip kept on the odometer's word carries no energy (NaN) and its own
+    # Energy Source; the label comes from its positions like any trip's.
+    rows = [r for d in range(3) for r in depot_day(d, A, charge_at=A)]
+    i_src = _row_col_index("Energy Source", HEADERS)
+    i_energy = _row_col_index("Energy Change (kWh)", HEADERS)
+    hop = trip(h(1, 9), h(1, 9, 10), A, D, distance=1.4)
+    hop[i_src] = "distance_only"
+    hop[i_energy] = NAN
+    back = trip(h(1, 10), h(1, 10, 10), D, A, distance=1.4)
+    back[i_src] = "distance_only"
+    rows[3:3] = [hop, back]
+    depots.relabel_rows(rows)
+    assert labels(rows)[3:5] == ["Outbound", "Return"]
+    assert base_points(depots.find_bases(rows)) == [A]
+
+
 def test_stop_rows_and_rows_of_no_known_kind_are_left_alone():
     rows = [r for d in range(3) for r in depot_day(d, A, charge_at=A)]
     # A long Stop at C must not make C a base; a blank label stays blank.

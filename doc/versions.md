@@ -1386,27 +1386,28 @@ fleet tree. No directory is created and `DATA_NAMESPACE` stays on `3.3.0`.
   `xlsx_patch_common.save_workbook_atomically`. A caller that assembles report rows
   itself calls `relabel_rows(rows, headers)` once per output report, after the rows are
   final, to get the labels this release writes.
-- **Test suite.** New: 58 unit tests of the bases and labels (one depot; two depots and
+- **Test suite.** New: 59 unit tests of the bases and labels (one depot; two depots and
   the trip between them; two operators in one run; a first charge away from the depot; a
   daytime charging site; an occasional overnight site; the share, the per-driving-day
   rate and the 6 h threshold; a sparse second cluster of one depot; the charge-site and
   trip-endpoint fallbacks, a run with no base and a charge-only run; diesel rows; every
   label rule; idempotence, independence from the current labels and the row order,
-  values as read back from a workbook, unusable positions, Stop and blank rows; the
-  summary; the glossary entry), 24 of the patcher (only the Leg Type cells change — every
-  cell of every sheet, the Report styles, hyperlinks, charts, sheet states compared — for
-  EV and diesel; the expected labels; idempotence without a rewrite; a dry run leaving
-  bytes and modification time alone; a generator-labelled workbook left unchanged; the
-  narrower EV layout; an unreadable workbook refused; discovery; the CLI; the atomic
-  save; and the glossary: where a new report has the entry, an old EV and an old diesel
-  glossary brought up to date with no other Definitions cell moving, the appended
-  entry's style, a second run that writes nothing, an entry brought up to date when no
-  label changes, a dry run, a shorter glossary, no Definitions sheet — twelve of them
-  fail on the patcher without it), 8 of the fine weather sampling (four fail on the
-  previous release), 7 integration tests driving `generate_report` over five of the
-  fixtures to a written workbook that the patcher leaves unchanged, and 2 import-contract
-  entries. The 3.9.0
-  test of the distance-only glossary entry now checks that entry without assuming it is
-  the last one (the `Leg Type` entry is).
+  values as read back from a workbook, unusable positions, Stop and blank rows; a
+  distance-only trip; the summary; the glossary entry), 24 of the patcher (only the Leg
+  Type cells change — every cell of every sheet, the Report styles, hyperlinks, charts,
+  sheet states compared — for EV and diesel; the expected labels; idempotence without a
+  rewrite; a dry run leaving bytes and modification time alone; a generator-labelled
+  workbook left unchanged; the narrower EV layout; an unreadable workbook refused;
+  discovery; the CLI; the atomic save; and the glossary: where a new report has the
+  entry, an old EV and an old diesel glossary brought up to date with no other
+  Definitions cell moving, the appended entry's style, a second run that writes nothing,
+  an entry brought up to date when no label changes, a dry run, a shorter glossary, no
+  Definitions sheet — twelve of them fail on the patcher without it), 8 of the fine
+  weather sampling (four fail on the previous release), 9 integration tests driving
+  `generate_report` over every registered fixture (six at this release) to a written
+  workbook that the patcher leaves unchanged — the distance-only trips of the fixture
+  that has them labelled as trips — and 2 import-contract entries. The 3.9.0 test of the
+  distance-only glossary entry now checks that entry without assuming it is the last one
+  (the `Leg Type` entry is).
 
-  Full suite: **1678 passed, 4 skipped** (3.9.1: 1579 passed, 4 skipped).
+  Full suite: **1681 passed, 4 skipped** (3.9.1: 1579 passed, 4 skipped).
