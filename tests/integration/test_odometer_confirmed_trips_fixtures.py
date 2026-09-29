@@ -17,7 +17,11 @@
   after a charge: 16:41:01 -> 16:56:06, 1.95 km at a SOC of 99 %.
 * EVSOC01 (the SOC branch) and EVMAD01 have no trip the floors reject: unchanged.
 
-With the key absent or set off, every fixture reproduces its golden.
+With the key absent or set off, every fixture reproduces its golden. With it on,
+every fixture keeps the consumer contract every registered fixture is held to
+(``check_consumer_contract``), which takes a distance-only trip by what it
+promises — no energy, no capacity, an odometer distance — and refuses one that
+breaks it.
 """
 
 from __future__ import annotations
@@ -214,6 +218,55 @@ def test_the_counter_feed_gains_one_distance_only_yard_move(
     assert move["energy_source"] == DISTANCE_ONLY_SOURCE
     assert (move["start_soc"], move["end_soc"]) == (99.0, 99.0)
     assert _km(move) == pytest.approx(1.95)
+
+
+# ── The consumer contract ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("alias", EV_ALIASES)
+def test_with_the_key_every_fixture_keeps_the_consumer_contract(
+    alias, with_key, run_fixture_segmentation, check_consumer_contract
+):
+    # The contract every registered fixture is held to. With the key on, EVSPD02
+    # holds three distance-only trips (SOC changes of -0.4, 0 and -0.8 points)
+    # and EVSPD01 one (0 points), none of which states an energy.
+    with_key(alias)
+    charges, trips = run_fixture_segmentation(alias)
+    check_consumer_contract(charges, trips)
+
+
+@pytest.mark.parametrize(
+    "source, field, value",
+    [
+        # A distance-only trip (the first: the 08:23:36 hop) that states an
+        # energy — the 0.4 points its SOC fell, as if measured: 0.004 x 462 kWh
+        # = 1.848 kWh ...
+        pytest.param(DISTANCE_ONLY_SOURCE, "delta_energy_kwh", -1.848, id="an-energy"),
+        # ... or gives its missing energy as None, whose absolute value the row
+        # builder cannot take for the EP ...
+        pytest.param(DISTANCE_ONLY_SOURCE, "delta_energy_kwh", None, id="energy-none"),
+        # ... or carries a capacity, although no energy was measured ...
+        pytest.param(
+            DISTANCE_ONLY_SOURCE, "effective_capacity_kwh", 462.0, id="a-capacity"
+        ),
+        # ... or lacks the odometer reading at its end, so its row has no distance.
+        pytest.param(DISTANCE_ONLY_SOURCE, "odo_end_km", None, id="no-odometer-end"),
+        # A measured trip is still held to the sign convention: a NaN energy is
+        # no measurement.
+        pytest.param(
+            "soc_estimate", "delta_energy_kwh", float("nan"), id="measured-no-energy"
+        ),
+    ],
+)
+def test_the_contract_refuses_a_trip_that_breaks_its_promise(
+    jump_day, check_consumer_contract, source, field, value
+):
+    charges, trips, _golden_day, _serialise = jump_day
+    check_consumer_contract(charges, trips)  # the day as segmented passes
+    trip = next(t for t in trips if t["energy_source"] == source)
+    trip[field] = value
+    with pytest.raises(AssertionError):
+        check_consumer_contract(charges, trips)
 
 
 # ── The report rows of the day ───────────────────────────────────────────────
